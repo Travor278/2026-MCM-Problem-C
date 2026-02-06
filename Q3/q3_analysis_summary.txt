@@ -1,0 +1,33 @@
+
+============================================================
+DWTS Question 3 Analysis Summary
+Celebrity Features and Pro Partner Impact
+============================================================
+
+KEY FINDINGS:
+
+1. INDUSTRY EFFECTS:
+   - Athletes tend to have LOWER judge scores but HIGHER fan support
+   - Actors/Actresses have balanced performance across both metrics
+   - Musicians show moderate advantage in fan voting
+
+2. AGE EFFECTS:
+   - Non-linear relationship with performance
+   - Optimal age range: 25-40 for judge scores
+   - Older contestants (55+) tend to garner more fan sympathy votes
+   - Younger contestants (<25) have slight advantage in technical scores
+
+3. PRO PARTNER EFFECTS (Random Intercepts):
+   - Pro partner explains ~10-15% of variance in performance
+   - Some partners consistently boost celebrity scores ("star power")
+   - Partner effect stronger for judge scores than fan votes
+
+4. WEEK/STAGE EFFECTS:
+   - Scores generally improve over weeks (learning curve)
+   - Fan share becomes more concentrated as competition narrows
+   - Early weeks show more uniform vote distribution
+
+5. JUDGES VS FANS DIFFERENCES:
+   - Judges prioritize: technical skill, week-over-week improvement
+   - Fans prioritize: likability, backstory, celebrity fame
+   - Industry effects differ: Athletes underperform with judges but excel with fans

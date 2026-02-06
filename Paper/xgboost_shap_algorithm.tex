@@ -1,0 +1,143 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage[ruled,linesnumbered]{algorithm2e}
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+% Remove line numbers
+\LinesNotNumbered
+
+% Set vertical line style for loops
+\SetAlgoLined
+\SetKwBlock{Begin}{begin}{end}
+
+\begin{document}
+
+% ============================================================
+% Algorithm 1: XGBoost Feature Importance Analysis
+% ============================================================
+\begin{algorithm}[htb]
+\caption{XGBoost Feature Importance with SHAP Values}
+\label{alg:xgboost_shap}
+\KwIn{Dataset $\mathcal{D} = \{(\mathbf{x}_i, y_i^{(J)}, y_i^{(F)})\}_{i=1}^{N}$, where $y^{(J)}$ is judge score, $y^{(F)}$ is fan share}
+\KwIn{Feature set $\mathcal{F} = \{f_1, f_2, \ldots, f_p\}$ including age, industry indicators, week, partner encoding}
+\KwIn{XGBoost hyperparameters: $T$ trees, max depth $d$, learning rate $\eta$}
+\KwOut{Feature importance rankings for judges and fans}
+
+\textbf{// Data Preprocessing}\;
+Encode categorical partner IDs: $f_{\text{partner}} \leftarrow \text{factorize}(\text{partner})$\;
+Log-transform fan share: $y^{(F)} \leftarrow \log(y^{(F)} + \epsilon)$, $\epsilon = 10^{-6}$\;
+Remove samples with missing values in $\mathcal{F}$\;
+
+\BlankLine
+\textbf{// Model Training}\;
+\For{target $y \in \{y^{(J)}, y^{(F)}\}$}{
+    Initialize model $\hat{y}^{(0)} = 0$\;
+    \For{$t = 1$ \KwTo $T$}{
+        Compute gradients: $g_i = \frac{\partial \ell(y_i, \hat{y}_i^{(t-1)})}{\partial \hat{y}_i^{(t-1)}}$\;
+        Compute Hessians: $h_i = \frac{\partial^2 \ell(y_i, \hat{y}_i^{(t-1)})}{\partial (\hat{y}_i^{(t-1)})^2}$\;
+        Fit regression tree $f_t$ by optimizing:\;
+        \quad $\mathcal{L}^{(t)} = \sum_{i=1}^{N} [g_i f_t(\mathbf{x}_i) + \frac{1}{2} h_i f_t^2(\mathbf{x}_i)] + \Omega(f_t)$\;
+        Update: $\hat{y}^{(t)} = \hat{y}^{(t-1)} + \eta \cdot f_t(\mathbf{x})$\;
+    }
+    Store trained model $\mathcal{M}_y$\;
+}
+
+\BlankLine
+\textbf{// SHAP Value Computation (TreeExplainer)}\;
+\For{each model $\mathcal{M} \in \{\mathcal{M}_{J}, \mathcal{M}_{F}\}$}{
+    \For{each sample $\mathbf{x}_i$}{
+        \For{each feature $f_j \in \mathcal{F}$}{
+            Compute SHAP value via tree path decomposition:\;
+            \quad $\phi_j(\mathbf{x}_i) = \sum_{S \subseteq \mathcal{F} \setminus \{j\}} \frac{|S|!(p-|S|-1)!}{p!} \left[ f_{\mathcal{M}}(S \cup \{j\}) - f_{\mathcal{M}}(S) \right]$\;
+        }
+    }
+    Store SHAP matrix $\Phi \in \mathbb{R}^{N \times p}$\;
+}
+
+\BlankLine
+\textbf{// Feature Importance Ranking}\;
+\For{each feature $f_j$}{
+    Compute mean absolute SHAP: $I_j = \frac{1}{N} \sum_{i=1}^{N} |\phi_j(\mathbf{x}_i)|$\;
+}
+Rank features by $I_j$ in descending order\;
+
+\Return Importance rankings $\mathcal{R}^{(J)}$, $\mathcal{R}^{(F)}$ for judge and fan models\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 2: Linear Mixed-Effects Model for Partner Effects
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Linear Mixed-Effects Model for Pro Partner Random Effects}
+\label{alg:lmm}
+\KwIn{Dataset $\mathcal{D}$ with outcomes $y$, fixed effects $\mathbf{X}$, grouping factor (partner) $g$}
+\KwIn{Model specification: $y = \mathbf{X}\boldsymbol{\beta} + \mathbf{Z}\mathbf{u} + \boldsymbol{\varepsilon}$}
+\KwOut{Fixed effects $\hat{\boldsymbol{\beta}}$, random effects $\hat{\mathbf{u}}$, variance components}
+
+\textbf{// Model Specification}\;
+Fixed effects: $\mathbf{X} = [\text{Age}, \text{Industry}_1, \ldots, \text{Industry}_k, \text{Week}, \text{StageRatio}]$\;
+Random effects: $\mathbf{u}_g \sim \mathcal{N}(0, \sigma_u^2)$ for each partner $g$\;
+Residuals: $\varepsilon_i \sim \mathcal{N}(0, \sigma^2)$\;
+
+\BlankLine
+\textbf{// Parameter Estimation (REML)}\;
+Construct marginal covariance: $\mathbf{V} = \mathbf{Z}\mathbf{G}\mathbf{Z}^\top + \mathbf{R}$\;
+Maximize restricted log-likelihood:\;
+\quad $\ell_R(\boldsymbol{\theta}) = -\frac{1}{2}\left[\log|\mathbf{V}| + \log|\mathbf{X}^\top\mathbf{V}^{-1}\mathbf{X}| + (\mathbf{y}-\mathbf{X}\hat{\boldsymbol{\beta}})^\top\mathbf{V}^{-1}(\mathbf{y}-\mathbf{X}\hat{\boldsymbol{\beta}})\right]$\;
+Estimate $\hat{\sigma}_u^2$, $\hat{\sigma}^2$ via Powell optimization\;
+
+\BlankLine
+\textbf{// Extract Partner Effects}\;
+Compute BLUPs: $\hat{\mathbf{u}} = \mathbf{G}\mathbf{Z}^\top\mathbf{V}^{-1}(\mathbf{y} - \mathbf{X}\hat{\boldsymbol{\beta}})$\;
+Compute ICC: $\rho = \frac{\hat{\sigma}_u^2}{\hat{\sigma}_u^2 + \hat{\sigma}^2}$\;
+
+\BlankLine
+\textbf{// Interpretation}\;
+\For{each partner $g$}{
+    \lIf{$\hat{u}_g > 0$}{Partner adds positive effect (``star power'')}
+    \lElse{Partner has negative baseline effect}
+}
+
+\Return $\hat{\boldsymbol{\beta}}$, $\{\hat{u}_g\}$, ICC $\rho$\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 3: SHAP-based Judge vs Fan Preference Analysis
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Comparative Feature Effect Analysis: Judges vs Fans}
+\label{alg:compare}
+\KwIn{SHAP matrices $\Phi^{(J)}$, $\Phi^{(F)}$ from Algorithm~\ref{alg:xgboost_shap}}
+\KwIn{Feature matrix $\mathbf{X}$, feature names $\mathcal{F}$}
+\KwOut{Comparative effect analysis for each feature}
+
+\textbf{// Global Importance Comparison}\;
+\For{each feature $f_j \in \mathcal{F}$}{
+    $I_j^{(J)} = \text{mean}(|\Phi^{(J)}_{:,j}|)$ \tcp*{Judge importance}
+    $I_j^{(F)} = \text{mean}(|\Phi^{(F)}_{:,j}|)$ \tcp*{Fan importance}
+    $\Delta_j = I_j^{(F)} - I_j^{(J)}$ \tcp*{Relative fan preference}
+}
+
+\BlankLine
+\textbf{// Industry-Specific Effects}\;
+\For{each industry indicator $f_{\text{ind}} \in \{\text{Athlete}, \text{Actor}, \text{Model}, \ldots\}$}{
+    Select samples: $\mathcal{S} = \{i : x_{i,\text{ind}} = 1\}$\;
+    $\bar{\phi}^{(J)}_{\text{ind}} = \text{mean}(\Phi^{(J)}_{\mathcal{S}, \text{ind}})$ \tcp*{Judge effect}
+    $\bar{\phi}^{(F)}_{\text{ind}} = \text{mean}(\Phi^{(F)}_{\mathcal{S}, \text{ind}})$ \tcp*{Fan effect}
+    \If{$\bar{\phi}^{(J)}_{\text{ind}} < 0$ \textbf{and} $\bar{\phi}^{(F)}_{\text{ind}} > 0$}{
+        Flag: Industry favored by fans, penalized by judges\;
+    }
+}
+
+\BlankLine
+\textbf{// Age Dependence Analysis}\;
+Fit polynomial: $\phi_{\text{age}}^{(J)}(x) = \beta_0 + \beta_1 x + \beta_2 x^2$\;
+Fit polynomial: $\phi_{\text{age}}^{(F)}(x) = \gamma_0 + \gamma_1 x + \gamma_2 x^2$\;
+Optimal age (judges): $x^*_J = -\beta_1 / (2\beta_2)$\;
+Optimal age (fans): $x^*_F = -\gamma_1 / (2\gamma_2)$\;
+
+\Return Importance rankings, industry effects, age optima\;
+\end{algorithm}
+
+\end{document}

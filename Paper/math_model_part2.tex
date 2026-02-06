@@ -1,0 +1,524 @@
+\documentclass[12pt]{article}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{bm}
+\usepackage[margin=1in]{geometry}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{booktabs}
+
+\begin{document}
+
+\section{Mathematical Formulation of Fan Vote Inference}
+
+The core of our problem is to infer the unobserved fan voting preferences based on the observed judges' scores and the weekly elimination results. We model each week within each season as an independent Bayesian inference problem.
+
+\subsection{Notations and Problem Definition}
+
+Let $s$ denote the season index and $w$ denote the week index. We define the set of contestants participating in season $s$, week $w$ as $\mathcal{C}_{s,w}$, with the total number of contestants $N_{s,w} = |\mathcal{C}_{s,w}|$.
+
+For each contestant $i \in \mathcal{C}_{s,w}$, we define the following variables:
+
+\begin{itemize}
+    \item \textbf{Observed Variable (Judges):} Let $J_{s,w,i} \in \mathbb{R}^+$ be the total score given by the panel of judges to contestant $i$. When context is clear, we abbreviate this as $J_i$.
+
+    \item \textbf{Latent Variable (Fans):} Let $\theta_{s,w,i} \in [0, 1]$ represent the \textit{true fan vote share} (proportion of total fan votes) received by contestant $i$. This is the unknown parameter we aim to estimate.
+
+    \item \textbf{Elimination Outcome:} Let $E_{s,w} \in \mathcal{C}_{s,w}$ denote the contestant who was eliminated at the end of week $w$. This serves as the primary constraint for our inference.
+\end{itemize}
+
+Since the exact number of fan votes is unknown and varies significantly across weeks and seasons, we focus on the \textit{share} of votes rather than absolute counts. The vector of fan vote shares $\bm{\theta}_{s,w} = (\theta_{s,w,1}, \dots, \theta_{s,w,N_{s,w}})$ must satisfy the \textbf{simplex constraint}:
+\begin{equation}
+    \sum_{i=1}^{N_{s,w}} \theta_{s,w,i} = 1, \quad \text{and} \quad \theta_{s,w,i} \geq 0 \quad \forall i.
+\end{equation}
+
+This constraint ensures that fan vote shares form a valid probability distribution over contestants, making the Dirichlet distribution a natural modeling choice.
+
+\subsection{Prior Distribution}
+
+We adopt a symmetric Dirichlet prior for the fan vote shares:
+\begin{equation}
+    \boldsymbol{\theta}_{s,w} \sim \text{Dirichlet}(\boldsymbol{\alpha}), \quad \boldsymbol{\alpha} = (\alpha_1, \ldots, \alpha_N) = (1, 1, \ldots, 1).
+\end{equation}
+
+The uniform Dirichlet prior ($\alpha_i = 1$ for all $i$) represents maximum ignorance about the relative popularity of contestants before observing elimination outcomes. The probability density function is:
+\begin{equation}
+    p(\boldsymbol{\theta}) = \frac{\Gamma(\sum_{i=1}^N \alpha_i)}{\prod_{i=1}^N \Gamma(\alpha_i)} \prod_{i=1}^N \theta_i^{\alpha_i - 1} = (N-1)! \cdot \mathbf{1}_{\Delta^{N-1}}(\boldsymbol{\theta}),
+\end{equation}
+where $\Delta^{N-1}$ denotes the $(N-1)$-dimensional probability simplex.
+
+\subsection{Likelihood Functions and Elimination Constraints}
+
+The observed data for each week is the identity of the eliminated contestant $E_{s,w}$. The likelihood function $P(E_{s,w} | \boldsymbol{\theta}_{s,w})$ is determined by the specific elimination rules $R(s)$ active during season $s$. Since the exact vote counts are unavailable, we formulate the likelihood as a constraint satisfaction problem.
+
+Conceptually, the likelihood takes the form:
+\begin{equation}
+    \mathcal{L}(\boldsymbol{\theta}_{s,w}) \propto
+    \begin{cases}
+    1 & \text{if } \boldsymbol{\theta}_{s,w} \text{ creates a ranking consistent with } E_{s,w} \\
+    0 & \text{otherwise}
+    \end{cases}
+\end{equation}
+
+However, hard indicator constraints prevent gradient-based MCMC sampling. We therefore relax these constraints using continuous potential functions, as detailed below for each rule era.
+
+\subsubsection{Era 1: Rank-Based Points System (Seasons 1--2)}
+
+In the earliest seasons, contestants accumulate points based on their performance rankings rather than raw scores.
+
+\paragraph{Judge Points Calculation.}
+Let $J_i$ denote the raw judge score for contestant $i$. We first compute the rank $r^J(i)$ where the contestant with the highest score receives rank 1. The judge points are then assigned inversely:
+\begin{equation}
+    P^J_i = N - r^J(i) + 1,
+\end{equation}
+so that the highest-scoring contestant receives $N$ points and the lowest-scoring receives 1 point.
+
+We normalize these points to obtain a proportion:
+\begin{equation}
+    P^{J,\text{norm}}_i = \frac{P^J_i}{\sum_{k=1}^N P^J_k}.
+\end{equation}
+
+\paragraph{Combined Score.}
+The total score for contestant $i$ combines the normalized judge points with the fan vote share:
+\begin{equation}
+    S_i = P^{J,\text{norm}}_i + \theta_{s,w,i}.
+\end{equation}
+
+Note that both terms are normalized proportions, so $S_i \in [0, 2]$ and $\sum_i S_i = 2$.
+
+\paragraph{Elimination Constraint.}
+The eliminated contestant $E$ must have the strictly lowest total score among all contestants:
+\begin{equation}
+    \mathcal{C}_{\text{Era1}}: \quad S_E < S_k, \quad \forall k \in \mathcal{C}_{s,w} \setminus \{E\}.
+\end{equation}
+
+\paragraph{Soft Constraint Relaxation.}
+To enable MCMC sampling, we replace the hard inequality with a log-sigmoid potential:
+\begin{equation}
+    \log \mathcal{L}_{\text{Era1}}(\boldsymbol{\theta}) = \sum_{k \neq E} \log \sigma \left( \lambda \cdot (S_k - S_E) \right),
+\end{equation}
+where $\sigma(x) = (1+e^{-x})^{-1}$ is the logistic sigmoid function and $\lambda = 100$ is a scaling factor that controls the sharpness of the constraint. As $\lambda \to \infty$, this approaches the hard indicator function.
+
+\paragraph{Tie-Breaker Mechanism.}
+When two contestants have nearly identical total scores, the show's actual rules use fan votes as the tie-breaker (lower fan share is eliminated). We incorporate this with an additional potential:
+\begin{equation}
+    \phi_{\text{tie}}(i, E) = \mathbf{1}_{|S_i - S_E| < \epsilon} \cdot \log \sigma \left( \lambda \cdot (\theta_i - \theta_E) \right),
+\end{equation}
+where the indicator $\mathbf{1}_{|S_i - S_E| < \epsilon}$ is approximated by a soft sigmoid:
+\begin{equation}
+    \mathbf{1}_{|S_i - S_E| < \epsilon} \approx \sigma(-1000 \cdot |S_i - S_E| + 5).
+\end{equation}
+
+The complete log-likelihood for Era 1 is:
+\begin{equation}
+    \log \mathcal{L}_{\text{Era1}}(\boldsymbol{\theta}) = \sum_{k \neq E} \left[ \log \sigma(\lambda(S_k - S_E)) + \phi_{\text{tie}}(k, E) \right].
+\end{equation}
+
+\subsubsection{Era 2: Percentage-Based System (Seasons 3--27)}
+
+From Season 3 onwards, the show adopted a simpler percentage-based system where raw judge percentages are directly combined with fan vote shares.
+
+\paragraph{Normalized Judge Score.}
+Let $J_i$ be the raw judge score. The normalized judge percentage is:
+\begin{equation}
+    J^{\text{norm}}_i = \frac{J_i}{\sum_{k=1}^N J_k}.
+\end{equation}
+
+\paragraph{Combined Score.}
+The total score is the sum of judge and fan percentages:
+\begin{equation}
+    S_i = J^{\text{norm}}_i + \theta_{s,w,i}.
+\end{equation}
+
+\paragraph{Elimination Constraint.}
+The eliminated contestant must have the lowest combined percentage:
+\begin{equation}
+    \mathcal{C}_{\text{Era2}}: \quad S_E < S_k, \quad \forall k \in \mathcal{C}_{s,w} \setminus \{E\}.
+\end{equation}
+
+\paragraph{Soft Constraint Relaxation.}
+The log-likelihood contribution is:
+\begin{equation}
+    \log \mathcal{L}_{\text{Era2}}(\boldsymbol{\theta}) = \sum_{k \neq E} \log \sigma \left( \lambda \cdot (S_k - S_E) \right),
+\end{equation}
+with $\lambda = 100$.
+
+\subsubsection{Era 3: Bottom-Two Rule (Seasons 28+)}
+
+Beginning with Season 28, the elimination process changed significantly. The judges now select which contestant to eliminate from the ``Bottom Two'' couples---those with the two lowest combined scores. Crucially, within the Bottom Two, the final elimination is determined by \emph{live judge voting}, not by score. This means:
+\begin{enumerate}
+    \item The eliminated contestant must be \emph{in} the Bottom Two ($|\mathcal{K}_{\text{lower}}| \leq 1$).
+    \item Both $|\mathcal{K}_{\text{lower}}| = 0$ (lowest score) and $|\mathcal{K}_{\text{lower}}| = 1$ (second-lowest) are equally valid outcomes.
+\end{enumerate}
+
+\paragraph{Informative Prior.}
+Unlike Eras 1--2, we employ an \emph{informative} Dirichlet prior for Era 3. The rationale is that fan voting patterns tend to correlate with judge scores---contestants who perform well typically receive more fan support. We parameterize:
+\begin{equation}
+    \alpha_i = 0.5 + \kappa \cdot \frac{r^J(i) - 1}{N - 1},
+\end{equation}
+where $r^J(i)$ is the rank of contestant $i$ based on judge scores (1 = lowest, $N$ = highest), and $\kappa = 5.0$ is the prior concentration strength. This yields $\alpha_i \in [0.5, 5.5]$, with higher-scoring contestants receiving higher prior expected fan shares.
+
+\paragraph{Combined Score.}
+The total score follows the same structure as Era 1:
+\begin{equation}
+    S_i = P^{J,\text{norm}}_i + \theta_{s,w,i}.
+\end{equation}
+
+\paragraph{Bottom-Two Constraint.}
+Define the set of survivors with scores strictly lower than the eliminated contestant:
+\begin{equation}
+    \mathcal{K}_{\text{lower}} = \{ k \in \mathcal{C}_{s,w} \setminus \{E\} \mid S_k < S_E \}.
+\end{equation}
+
+The constraint requires that at most one survivor has a lower score than $E$:
+\begin{equation}
+    \mathcal{C}_{\text{B2}}: \quad |\mathcal{K}_{\text{lower}}| \leq 1.
+\end{equation}
+
+\paragraph{Soft Cardinality Approximation.}
+We approximate the cardinality using a sum of sigmoid functions with a \emph{softer} scale parameter:
+\begin{equation}
+    \widehat{|\mathcal{K}_{\text{lower}}|} = \sum_{k \neq E} \sigma(\lambda_{\text{soft}} \cdot (S_E - S_k)),
+\end{equation}
+where $\lambda_{\text{soft}} = 20$ (reduced from $\lambda = 100$ used in Eras 1--2). The softer boundary allows the posterior to explore configurations where the eliminated contestant is either the lowest or second-lowest scorer.
+
+\paragraph{Quadratic Penalty with Tolerance.}
+Violations of the Bottom-Two constraint are penalized quadratically, with an explicit tolerance threshold:
+\begin{equation}
+    \log \mathcal{L}_{\text{B2}}(\boldsymbol{\theta}) = -\gamma \cdot \left( \max(0, \widehat{|\mathcal{K}_{\text{lower}}|} - \tau) \right)^2,
+\end{equation}
+where $\gamma = 20$ is the penalty strength and $\tau = 1.3$ is the tolerance threshold. This formulation:
+\begin{itemize}
+    \item Allows $|\mathcal{K}_{\text{lower}}| \leq 1.3$ without penalty (accommodating sigmoid approximation noise).
+    \item Applies gentle quadratic penalty when clearly outside Bottom Two.
+    \item Does \emph{not} favor lowest score over second-lowest, reflecting the judge vote randomness.
+\end{itemize}
+
+\paragraph{Era 3 Parameter Summary.}
+\begin{table}[h]
+\centering
+\begin{tabular}{lcc}
+\toprule
+Parameter & Symbol & Value \\
+\midrule
+Prior concentration & $\kappa$ & 5.0 \\
+Soft constraint scale & $\lambda_{\text{soft}}$ & 20.0 \\
+Penalty threshold & $\tau$ & 1.3 \\
+Penalty strength & $\gamma$ & 20.0 \\
+\bottomrule
+\end{tabular}
+\caption{Era 3 (Bottom-Two Rule) model parameters. These settings allow balanced exploration of both $|\mathcal{K}_{\text{lower}}| = 0$ and $|\mathcal{K}_{\text{lower}}| = 1$ outcomes.}
+\end{table}
+
+\subsection{Posterior Distribution}
+
+Combining the Dirichlet prior with the rule-specific likelihood, the posterior distribution is:
+\begin{equation}
+    p(\boldsymbol{\theta}_{s,w} | E_{s,w}) \propto p(\boldsymbol{\theta}_{s,w}) \cdot \mathcal{L}_{R(s)}(\boldsymbol{\theta}_{s,w}),
+\end{equation}
+where $R(s) \in \{\text{Era1}, \text{Era2}, \text{B2}\}$ denotes the rule type for season $s$.
+
+In log-space:
+\begin{equation}
+    \log p(\boldsymbol{\theta} | E) = \log p(\boldsymbol{\theta}) + \log \mathcal{L}_{R(s)}(\boldsymbol{\theta}),
+\end{equation}
+where:
+\begin{itemize}
+    \item For Eras 1--2: $\log p(\boldsymbol{\theta}) = \text{const}$ (uniform Dirichlet prior).
+    \item For Era 3: $\log p(\boldsymbol{\theta}) = \sum_{i=1}^N (\alpha_i - 1) \log \theta_i + \text{const}$ (informative prior correlated with judge scores).
+\end{itemize}
+
+\subsection{MCMC Sampling Strategy}
+
+We employ Markov Chain Monte Carlo (MCMC) methods to sample from the posterior distribution.
+
+\subsubsection{Sampler Selection}
+
+The choice of sampler depends on the differentiability of the log-posterior:
+
+\begin{itemize}
+    \item \textbf{Era 2 (Percentage-based):} The log-likelihood is smooth and differentiable. We use the No-U-Turn Sampler (NUTS), an adaptive Hamiltonian Monte Carlo variant that automatically tunes step size and trajectory length.
+
+    \item \textbf{Era 1 and Era 3:} The rank-based computations and discrete-like tie-breaker mechanisms introduce numerical challenges. We use the Slice Sampler, which does not require gradient information and handles multimodal posteriors more robustly.
+\end{itemize}
+
+\subsubsection{Sampling Parameters}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcc}
+\toprule
+Parameter & Standard & Enhanced (S1--S2) \\
+\midrule
+Number of draws & 2000 & 5000 \\
+Tuning iterations & 1000 & 2000 \\
+Number of chains & 2 & 4 \\
+Sampler & NUTS / Slice & Slice \\
+\bottomrule
+\end{tabular}
+\caption{MCMC sampling parameters. Enhanced settings are used for Seasons 1--2 to ensure convergence given the additional tie-breaker constraints.}
+\end{table}
+
+\subsubsection{Enhanced Sampling for Seasons 1--2}
+
+The Era 1 model (Seasons 1--2) presents unique computational challenges that necessitate an enhanced sampling strategy. We implement a specialized sampling procedure with significantly increased computational resources.
+
+\paragraph{Challenges in Era 1 Inference.}
+Three factors contribute to the difficulty of sampling from the Era 1 posterior:
+
+\begin{enumerate}
+    \item \textbf{Tie-Breaker Discontinuity:} The tie-breaker potential $\phi_{\text{tie}}$ introduces near-discontinuous behavior in the log-posterior. When $|S_i - S_E|$ crosses the threshold $\epsilon \approx 0.005$, the potential changes rapidly, creating sharp ridges in the posterior landscape.
+
+    \item \textbf{Rank-Based Discretization:} Unlike the percentage-based system, the rank transformation $r^J(i)$ is inherently discrete. While we work with normalized points, the underlying rank structure creates non-smooth regions where small changes in fan shares can cause rank swaps.
+
+    \item \textbf{Constraint Interactions:} The combination of elimination constraints and tie-breaker constraints creates a complex feasible region. The posterior mass concentrates in narrow corridors of the simplex where both constraints are satisfied.
+\end{enumerate}
+
+\paragraph{Slice Sampler.}
+For Era 1 (and Era 3), we employ the Slice Sampler rather than gradient-based methods. The Slice Sampler operates by:
+
+\begin{enumerate}
+    \item Given current state $\boldsymbol{\theta}^{(t)}$, sample auxiliary variable $u \sim \text{Uniform}(0, p(\boldsymbol{\theta}^{(t)} | E))$.
+    \item Define the ``slice'' $\mathcal{S} = \{\boldsymbol{\theta} : p(\boldsymbol{\theta} | E) > u\}$.
+    \item Sample $\boldsymbol{\theta}^{(t+1)}$ uniformly from $\mathcal{S}$ using stepping-out and shrinkage procedures.
+\end{enumerate}
+
+The Slice Sampler is gradient-free and handles multimodal or irregular posteriors more robustly than Hamiltonian Monte Carlo, at the cost of higher autocorrelation.
+
+\paragraph{Enhanced Parameter Settings.}
+To compensate for the increased autocorrelation and ensure adequate exploration, we use enhanced sampling parameters for Seasons 1--2:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Parameter & Standard (Era 2) & Enhanced (Era 1) & Ratio \\
+\midrule
+Number of draws $N_{\text{draw}}$ & 2000 & 5000 & $2.5\times$ \\
+Tuning iterations $N_{\text{tune}}$ & 1000 & 2000 & $2\times$ \\
+Number of chains $M$ & 2 & 4 & $2\times$ \\
+Total samples & 4000 & 20000 & $5\times$ \\
+\bottomrule
+\end{tabular}
+\caption{Comparison of standard and enhanced MCMC parameters. The enhanced settings provide 5$\times$ more total samples to ensure convergence despite higher autocorrelation.}
+\end{table}
+
+\paragraph{Effective Sample Size Decomposition.}
+We monitor two variants of effective sample size:
+
+\begin{itemize}
+    \item \textbf{ESS-bulk} ($\text{ESS}_{\text{bulk}}$): Measures the effective number of independent samples for estimating the posterior mean and central credible intervals. Computed using rank-normalized draws to improve robustness.
+
+    \item \textbf{ESS-tail} ($\text{ESS}_{\text{tail}}$): Measures the effective sample size for estimating tail quantiles (5\% and 95\%). This is typically lower than ESS-bulk because tail regions are visited less frequently.
+\end{itemize}
+
+For reliable inference, we require:
+\begin{equation}
+    \text{ESS}_{\text{bulk}} > 400, \quad \text{ESS}_{\text{tail}} > 400.
+\end{equation}
+
+\paragraph{Convergence Criteria.}
+A week is considered ``converged'' if all of the following hold:
+\begin{align}
+    \max_i \hat{R}(\theta_i) &< 1.05, \\
+    \min_i \text{ESS}_{\text{bulk}}(\theta_i) &> 400, \\
+    \min_i \text{ESS}_{\text{tail}}(\theta_i) &> 400.
+\end{align}
+
+With the enhanced sampling strategy, we achieve 100\% convergence across all Season 1--2 weeks.
+
+\subsubsection{Convergence Diagnostics}
+
+We assess convergence using two standard diagnostics:
+
+\paragraph{$\hat{R}$ (R-hat) Statistic.}
+The potential scale reduction factor compares between-chain and within-chain variance:
+\begin{equation}
+    \hat{R} = \sqrt{\frac{\hat{V}}{W}},
+\end{equation}
+where $\hat{V}$ is the estimated marginal posterior variance and $W$ is the within-chain variance. We require $\hat{R} < 1.05$ for all parameters.
+
+\paragraph{Effective Sample Size (ESS).}
+ESS accounts for autocorrelation in the MCMC chains:
+\begin{equation}
+    \text{ESS} = \frac{MN}{1 + 2\sum_{t=1}^{\infty} \rho_t},
+\end{equation}
+where $M$ is the number of chains, $N$ is the number of draws per chain, and $\rho_t$ is the autocorrelation at lag $t$. We require $\text{ESS} > 400$ for reliable inference.
+
+\subsection{Point Estimates and Uncertainty Quantification}
+
+\subsubsection{Posterior Mean}
+The point estimate for each contestant's fan vote share is the posterior mean:
+\begin{equation}
+    \hat{\theta}_i = \mathbb{E}[\theta_i | E_{s,w}] \approx \frac{1}{T} \sum_{t=1}^{T} \theta_i^{(t)},
+\end{equation}
+where $\{\theta_i^{(t)}\}_{t=1}^{T}$ are the MCMC samples after discarding burn-in.
+
+\subsubsection{Highest Density Interval (HDI)}
+We report 95\% HDI as the credible interval:
+\begin{equation}
+    \text{HDI}_{95\%}(\theta_i) = [L_i, U_i],
+\end{equation}
+where $[L_i, U_i]$ is the shortest interval containing 95\% of the posterior probability mass. The HDI width $U_i - L_i$ quantifies estimation uncertainty.
+
+\subsection{Self-Consistency Verification}
+
+As a diagnostic check, we verify that posterior mean estimates satisfy the elimination constraints. Since the likelihood function explicitly enforces these constraints (via soft potentials with $\lambda = 100$), self-consistency is a necessary condition for convergence rather than an independent validation metric.
+
+\paragraph{Verification Criterion.}
+For each week, we check whether the posterior mean $\hat{\boldsymbol{\theta}}$ produces a combined score ranking consistent with the observed elimination:
+\begin{equation}
+    \text{Consistent}_{s,w} = \mathbf{1}\left[ \hat{S}_E \leq \hat{S}_{(2)} \right],
+\end{equation}
+where $\hat{S}_{(2)}$ denotes the second-lowest combined score among all contestants. This unified criterion covers both the ``lowest score'' rule (Eras 1--2) and the ``Bottom-Two'' rule (Era 3).
+
+A week failing this check indicates MCMC non-convergence or numerical issues, requiring re-sampling with enhanced parameters.
+
+\subsection{Algorithm Summary}
+
+\begin{algorithm}[H]
+\caption{Bayesian Fan Vote Share Inference (General)}
+\begin{algorithmic}[0]
+\Require Season $s$, week $w$, contestants $\mathcal{C}_{s,w}$, judge scores $\{J_i\}$, eliminated contestant $E$
+\Ensure Posterior samples $\{\boldsymbol{\theta}^{(t)}\}_{t=1}^{T}$, diagnostics
+
+\State Determine rule type: $R(s) \gets \begin{cases} \text{Era1} & s \leq 2 \\ \text{Era2} & 3 \leq s \leq 27 \\ \text{B2} & s \geq 28 \end{cases}$
+
+\State Compute normalized scores:
+\If{$R(s) = \text{Era2}$}
+    \State $P^{\text{norm}}_i \gets J_i / \sum_k J_k$ \Comment{Direct percentage}
+\Else
+    \State Compute ranks $r^J(i)$ from $\{J_i\}$
+    \State $P^J_i \gets N - r^J(i) + 1$ \Comment{Rank to points}
+    \State $P^{\text{norm}}_i \gets P^J_i / \sum_k P^J_k$
+\EndIf
+
+\State Initialize: $\boldsymbol{\theta} \sim \text{Dirichlet}(\mathbf{1}_N)$
+
+\State Define log-likelihood $\log \mathcal{L}_{R(s)}(\boldsymbol{\theta})$ per Section 1.3
+
+\State Select sampler and parameters:
+\If{$R(s) = \text{Era1}$}
+    \State sampler $\gets$ Slice, $(N_{\text{draw}}, N_{\text{tune}}, M) \gets (5000, 2000, 4)$ \Comment{Enhanced}
+\ElsIf{$R(s) = \text{Era2}$}
+    \State sampler $\gets$ NUTS, $(N_{\text{draw}}, N_{\text{tune}}, M) \gets (2000, 1000, 2)$
+\Else
+    \State sampler $\gets$ Slice, $(N_{\text{draw}}, N_{\text{tune}}, M) \gets (2000, 1000, 2)$
+\EndIf
+
+\State Run MCMC with $M$ parallel chains, each with $N_{\text{tune}}$ tuning + $N_{\text{draw}}$ sampling iterations
+
+\State Compute diagnostics: $\hat{R}$, $\text{ESS}_{\text{bulk}}$, $\text{ESS}_{\text{tail}}$
+
+\State \Return $\{\boldsymbol{\theta}^{(t)}\}_{t=1}^{T}$, diagnostics
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Era 1 Enhanced Sampling (Seasons 1--2 Specialized)}
+\begin{algorithmic}[0]
+\Require Week data with $N$ contestants, eliminated contestant $E$
+\Ensure Posterior samples with verified convergence
+
+\State \textbf{Step 1: Compute Judge Points}
+\For{each contestant $i$}
+    \State $r^J(i) \gets$ rank of $J_i$ (highest score = rank 1)
+    \State $P^J_i \gets N - r^J(i) + 1$
+\EndFor
+\State $P^{J,\text{norm}}_i \gets P^J_i / \sum_k P^J_k$ for all $i$
+
+\State \textbf{Step 2: Define Potentials}
+\State Initialize log-likelihood: $\ell(\boldsymbol{\theta}) \gets 0$
+\For{each survivor $k \neq E$}
+    \State $S_k \gets P^{J,\text{norm}}_k + \theta_k$, \quad $S_E \gets P^{J,\text{norm}}_E + \theta_E$
+    \State $\ell \gets \ell + \log \sigma(\lambda(S_k - S_E))$ \Comment{Elimination constraint}
+    \State $\delta \gets |S_k - S_E|$
+    \State $w_{\text{tie}} \gets \sigma(-1000 \cdot \delta + 5)$ \Comment{Tie indicator}
+    \State $\ell \gets \ell + w_{\text{tie}} \cdot \log \sigma(\lambda(\theta_k - \theta_E))$ \Comment{Tie-breaker}
+\EndFor
+
+\State \textbf{Step 3: Enhanced MCMC Sampling}
+\State Initialize $M = 4$ chains from $\text{Dirichlet}(\mathbf{1}_N)$
+\For{each chain $m = 1, \ldots, 4$}
+    \State Run $N_{\text{tune}} = 2000$ tuning iterations (Slice sampler)
+    \State Run $N_{\text{draw}} = 5000$ sampling iterations
+    \State Store samples $\{\boldsymbol{\theta}^{(m,t)}\}_{t=1}^{5000}$
+\EndFor
+
+\State \textbf{Step 4: Convergence Verification}
+\State Compute $\hat{R}_i$ for each $\theta_i$ across 4 chains
+\State Compute $\text{ESS}_{\text{bulk},i}$ and $\text{ESS}_{\text{tail},i}$
+\State converged $\gets (\max_i \hat{R}_i < 1.05) \land (\min_i \text{ESS}_{\text{bulk},i} > 400)$
+
+\State \Return All $4 \times 5000 = 20000$ posterior samples, convergence status
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Notation Summary}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{cl}
+\toprule
+Symbol & Description \\
+\midrule
+\multicolumn{2}{l}{\textit{Data and Indices}} \\
+$s, w$ & Season and week indices \\
+$N_{s,w}$ & Number of contestants in week $w$ of season $s$ \\
+$\mathcal{C}_{s,w}$ & Set of contestants \\
+$E_{s,w}$ & Eliminated contestant (observed) \\
+\midrule
+\multicolumn{2}{l}{\textit{Judge Scores}} \\
+$J_i$ & Raw judge score for contestant $i$ \\
+$r^J(i)$ & Rank of contestant $i$ based on judge scores (1 = highest) \\
+$P^J_i$ & Judge points derived from rank: $P^J_i = N - r^J(i) + 1$ \\
+$P^{J,\text{norm}}_i$ & Normalized judge points: $P^J_i / \sum_k P^J_k$ \\
+$J^{\text{norm}}_i$ & Normalized judge percentage: $J_i / \sum_k J_k$ \\
+\midrule
+\multicolumn{2}{l}{\textit{Fan Vote Model}} \\
+$\theta_{s,w,i}$ & Latent fan vote share for contestant $i$ \\
+$\boldsymbol{\theta}_{s,w}$ & Fan vote share vector $(\theta_1, \ldots, \theta_N)$ \\
+$\boldsymbol{\alpha}$ & Dirichlet prior concentration parameters \\
+$S_i$ & Combined score: $P^{J,\text{norm}}_i + \theta_i$ or $J^{\text{norm}}_i + \theta_i$ \\
+\midrule
+\multicolumn{2}{l}{\textit{Constraint Parameters}} \\
+$\lambda$ & Constraint sharpness parameter ($\lambda = 100$) \\
+$\gamma$ & Penalty strength for Bottom-Two rule ($\gamma = 50$) \\
+$\sigma(\cdot)$ & Logistic sigmoid function: $\sigma(x) = (1+e^{-x})^{-1}$ \\
+$\phi_{\text{tie}}$ & Tie-breaker potential function \\
+\midrule
+\multicolumn{2}{l}{\textit{MCMC Parameters}} \\
+$N_{\text{draw}}$ & Number of posterior samples per chain \\
+$N_{\text{tune}}$ & Number of tuning/burn-in iterations \\
+$M$ & Number of parallel MCMC chains \\
+$T$ & Total number of posterior samples: $T = M \times N_{\text{draw}}$ \\
+\midrule
+\multicolumn{2}{l}{\textit{Convergence Diagnostics}} \\
+$\hat{R}$ & Potential scale reduction factor (R-hat) \\
+$\text{ESS}_{\text{bulk}}$ & Effective sample size for bulk of distribution \\
+$\text{ESS}_{\text{tail}}$ & Effective sample size for distribution tails \\
+\midrule
+\multicolumn{2}{l}{\textit{Output}} \\
+$\hat{\theta}_i$ & Posterior mean estimate of fan vote share \\
+$\text{HDI}_{95\%}$ & 95\% Highest Density Interval \\
+\bottomrule
+\end{tabular}
+\caption{Summary of notation used in the model.}
+\end{table}
+
+\subsection{Implementation Notes}
+
+The model is implemented in Python using PyMC (version 5.x) for probabilistic programming and ArviZ for diagnostics. Key implementation details:
+
+\begin{itemize}
+    \item \textbf{Dirichlet Parameterization:} We use PyMC's native \texttt{Dirichlet} distribution with concentration $\boldsymbol{\alpha} = \mathbf{1}_N$, which automatically handles the simplex constraint.
+
+    \item \textbf{Potential Functions:} Soft constraints are implemented via \texttt{pm.Potential}, which adds arbitrary log-probability terms to the model.
+
+    \item \textbf{Tensor Operations:} Pytensor (formerly Theano) provides automatic differentiation for NUTS and efficient array operations for the Slice sampler.
+
+    \item \textbf{Random Seed:} All sampling uses a fixed random seed (42) for reproducibility.
+
+    \item \textbf{Rank Computation:} The \texttt{scipy.stats.rankdata} function with \texttt{method='average'} handles tied judge scores by assigning the average rank.
+\end{itemize}
+
+\end{document}

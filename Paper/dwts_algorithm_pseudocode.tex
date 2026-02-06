@@ -1,0 +1,1125 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage[ruled]{algorithm2e}
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+\LinesNotNumbered
+\SetAlgoLined
+
+\begin{document}
+
+% ============================================================
+% Algorithm 1: Data Preprocessing
+% ============================================================
+\begin{algorithm}[htb]
+\caption{DWTS Data Preprocessing}
+\label{alg:preprocessing}
+\KwIn{Raw CSV file with wide format: each row = one contestant, columns = weekly scores}
+\KwOut{Long format dataset $\mathcal{D}$: each row = (season, week, contestant, scores, metrics)}
+
+\textbf{// Load and Parse Data}\;
+Load raw data from CSV file\;
+\For{each score column matching \texttt{weekX\_judgeY\_score}}{
+    Convert to numeric, set invalid values to NaN\;
+}
+
+\BlankLine
+\textbf{// Process Elimination Information}\;
+\For{each contestant $c$}{
+    Parse \texttt{results} field to extract \texttt{final\_rank} and \texttt{eliminated\_week}\;
+    \If{\texttt{eliminated\_week} is missing}{
+        Infer from last week with valid scores\;
+    }
+    \For{each week $w > $ \texttt{eliminated\_week}}{
+        Set scores to NaN (post-elimination zeros)\;
+    }
+}
+
+\BlankLine
+\textbf{// Reshape to Long Format}\;
+\For{each contestant $c$}{
+    \For{each week $w$ with valid scores}{
+        Create record: $(c, w, \text{scores}, \sum \text{scores}, \bar{\text{scores}})$\;
+    }
+}
+
+\BlankLine
+\textbf{// Compute Competition Metrics}\;
+\For{each (season, week) group}{
+    $\texttt{judge\_rank}_i \leftarrow \text{rank}(\text{score}_i)$ using min method\;
+    $\texttt{judge\_percent}_i \leftarrow \text{score}_i / \sum_j \text{score}_j$\;
+    $\texttt{contestants\_this\_week} \leftarrow$ count of contestants\;
+}
+
+\Return Processed long-format dataset $\mathcal{D}$\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 2: Bayesian Fan Vote Model (Main)
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Bayesian Fan Vote Share Estimation (Main Controller)}
+\label{alg:bayesian_main}
+\KwIn{Processed dataset $\mathcal{D}$, rule boundaries: $S_{\text{pct}}=3$, $S_{\text{b2}}=28$}
+\KwOut{Fan share estimates with HDI for all (season, week, contestant)}
+
+Load and normalize data: $\texttt{judge\_percent\_norm}_i = \texttt{judge\_percent}_i / \sum_j \texttt{judge\_percent}_j$\;
+
+\BlankLine
+\For{each (season $s$, week $w$) with elimination}{
+    $\mathcal{W} \leftarrow$ contestants competing in week $w$\;
+    $e \leftarrow$ identify eliminated contestant\;
+
+    \BlankLine
+    \tcp{Select model based on season}
+    \uIf{$s < S_{\text{pct}}$}{
+        $(\text{trace}, \text{contestants}) \leftarrow$ \texttt{RankBasedModel}$(\mathcal{W}, e)$ \tcp*{Alg.~\ref{alg:rank}}
+    }
+    \uElseIf{$s < S_{\text{b2}}$}{
+        $(\text{trace}, \text{contestants}) \leftarrow$ \texttt{PercentageModel}$(\mathcal{W}, e)$ \tcp*{Alg.~\ref{alg:pct}}
+    }
+    \Else{
+        $(\text{trace}, \text{contestants}) \leftarrow$ \texttt{Bottom2Model}$(\mathcal{W}, e)$ \tcp*{Alg.~\ref{alg:b2}}
+    }
+
+    \BlankLine
+    \tcp{Extract posterior estimates}
+    \For{each contestant $i$}{
+        $\hat{f}_i \leftarrow \mathbb{E}[\text{fan\_shares}_i]$\;
+        $\text{HDI}_i \leftarrow$ 95\% highest density interval\;
+        Store $(s, w, i, \hat{f}_i, \text{HDI}_i)$\;
+    }
+}
+
+\Return All fan share estimates with uncertainty\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 3: Rank-Based Model (S1-S2)
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Rank-Based Bayesian Model (Seasons 1--2)}
+\label{alg:rank}
+\KwIn{Week data $\mathcal{W}$, eliminated contestant $e$, MCMC params: $T=5000$, $B=2000$, $C=4$}
+\KwOut{MCMC trace with posterior samples}
+
+\textbf{// Compute Judge Points from Ranks}\;
+$\mathbf{s} \leftarrow$ judge scores for all $n$ contestants\;
+$\mathbf{r} \leftarrow \text{rank}(-\mathbf{s})$ \tcp*{Highest score $\to$ rank 1}
+$\mathbf{p} \leftarrow n - \mathbf{r} + 1$ \tcp*{Rank 1 gets $n$ points}
+$\tilde{\mathbf{J}} \leftarrow \mathbf{p} / \sum_i p_i$ \tcp*{Normalize: $\sum_i \tilde{J}_i = 1$}
+
+\BlankLine
+\textbf{// Build PyMC Model}\;
+$\boldsymbol{\alpha} \leftarrow \mathbf{1}_n$ \tcp*{Uniform Dirichlet prior}
+$\mathbf{f} \sim \text{Dirichlet}(\boldsymbol{\alpha})$ \tcp*{Fan shares: $\sum_i f_i = 1$}
+$\mathbf{T} \leftarrow \tilde{\mathbf{J}} + \mathbf{f}$ \tcp*{Combined: both normalized}
+
+\BlankLine
+\textbf{// Elimination Constraints}\;
+\For{each survivor $i \neq e$}{
+    $\delta_i \leftarrow T_i - T_e$\;
+    Add potential: $\log \sigma(\delta_i \cdot \lambda)$ where $\lambda = 100$\;
+}
+
+\textbf{// Tie-Breaker Constraints}\;
+\For{each survivor $i \neq e$}{
+    $\tau \leftarrow \sigma(-|T_i - T_e| \cdot 1000 + 5)$ \tcp*{Is tie?}
+    Add potential: $\tau \cdot \log \sigma((f_i - f_e) \cdot \lambda)$\;
+}
+
+\BlankLine
+\textbf{// MCMC Sampling}\;
+Run Slice sampler: $T$ draws, $B$ tuning, $C$ chains\;
+
+\Return trace\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 4: Percentage-Based Model (S3-S27)
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Percentage-Based Bayesian Model (Seasons 3--27)}
+\label{alg:pct}
+\KwIn{Week data $\mathcal{W}$, eliminated contestant $e$, MCMC params: $T=2000$, $B=1000$, $C=2$}
+\KwOut{MCMC trace with posterior samples}
+
+\textbf{// Compute Normalized Judge Percentage}\;
+$\mathbf{s} \leftarrow$ judge scores for all $n$ contestants\;
+$\tilde{\mathbf{J}} \leftarrow \mathbf{s} / \sum_i s_i$ \tcp*{Normalize: $\sum_i \tilde{J}_i = 1$}
+
+\BlankLine
+\textbf{// Build PyMC Model}\;
+$\boldsymbol{\alpha} \leftarrow \mathbf{1}_n$ \tcp*{Uniform Dirichlet prior}
+$\mathbf{f} \sim \text{Dirichlet}(\boldsymbol{\alpha})$ \tcp*{Fan shares: $\sum_i f_i = 1$}
+$\mathbf{T} \leftarrow \tilde{\mathbf{J}} + \mathbf{f}$ \tcp*{Combined: both normalized}
+
+\BlankLine
+\textbf{// Elimination Constraint (Lowest Score Eliminated)}\;
+\For{each survivor $i \neq e$}{
+    $\delta_i \leftarrow T_i - T_e$\;
+    Add potential: $\log \sigma(\delta_i \cdot \lambda)$ where $\lambda = 100$\;
+}
+
+\BlankLine
+\textbf{// MCMC Sampling}\;
+Run NUTS sampler: $T$ draws, $B$ tuning, $C$ chains\;
+
+\Return trace\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 5: Bottom-2 Model (S28+)
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Bottom-2 Rule Bayesian Model (Seasons 28+)}
+\label{alg:b2}
+\KwIn{Week data $\mathcal{W}$, eliminated contestant $e$, MCMC params: $T=3000$, $B=1500$, $C=4$}
+\KwOut{MCMC trace with posterior samples}
+
+\textbf{// Compute Judge Points (Same as Rank-Based)}\;
+$\mathbf{s} \leftarrow$ judge scores, $\mathbf{r} \leftarrow \text{rank}(-\mathbf{s})$\;
+$\mathbf{p} \leftarrow n - \mathbf{r} + 1$, $\tilde{\mathbf{J}} \leftarrow \mathbf{p} / \sum_i p_i$ \tcp*{$\sum_i \tilde{J}_i = 1$}
+
+\BlankLine
+\textbf{// Build PyMC Model with Informative Prior}\;
+$\mathbf{q} \leftarrow (\text{rank}(\mathbf{s}) - 1) / (n - 1)$ \tcp*{Judge percentile $\in [0,1]$}
+$\boldsymbol{\alpha} \leftarrow 0.5 + \kappa \cdot \mathbf{q}$ where $\kappa = 5$ \tcp*{Informative prior}
+$\mathbf{f} \sim \text{Dirichlet}(\boldsymbol{\alpha})$ \tcp*{$\sum_i f_i = 1$}
+$\mathbf{T} \leftarrow \tilde{\mathbf{J}} + \mathbf{f}$ \tcp*{Combined: both normalized}
+
+\BlankLine
+\textbf{// Soft Bottom-2 Constraint}\;
+$N_{\text{lower}} \leftarrow 0$\;
+\For{each survivor $i \neq e$}{
+    $\delta_i \leftarrow T_e - T_i$ \tcp*{Positive if $e$ higher than $i$}
+    $N_{\text{lower}} \leftarrow N_{\text{lower}} + \sigma(\delta_i \cdot \gamma)$ where $\gamma = 20$\;
+}
+$\text{excess} \leftarrow N_{\text{lower}} - \theta$ where $\theta = 1.3$\;
+Add potential: $\begin{cases} -\rho \cdot \text{excess}^2 & \text{if } \text{excess} > 0 \\ 0 & \text{otherwise} \end{cases}$ where $\rho = 20$\;
+
+\BlankLine
+\textbf{// MCMC Sampling}\;
+Run Slice sampler: $T$ draws, $B$ tuning, $C$ chains\;
+
+\Return trace\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 6: Consistency Analysis
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Elimination Consistency Validation}
+\label{alg:consistency}
+\KwIn{Fan share estimates $\hat{\mathbf{f}}$, original data $\mathcal{D}$}
+\KwOut{Validation results: consistency rate, margin distribution}
+
+\For{each (season $s$, week $w$)}{
+    $\text{rule} \leftarrow$ determine rule type based on $s$\;
+    Compute judge component $\mathbf{J}$ based on rule\;
+    $\mathbf{T} \leftarrow \mathbf{J} + \hat{\mathbf{f}}$ \tcp*{Reconstructed total scores}
+
+    \BlankLine
+    \uIf{rule $\in$ \{rank, percentage\}}{
+        $\text{consistent} \leftarrow (T_e \leq \min_{i \neq e} T_i)$\;
+        $\text{margin} \leftarrow \min_{i \neq e} T_i - T_e$\;
+    }
+    \Else{
+        $N_{\text{lower}} \leftarrow |\{i : T_i < T_e, i \neq e\}|$\;
+        $\text{consistent} \leftarrow (N_{\text{lower}} \leq 1)$ \tcp*{In Bottom 2}
+        $\text{margin} \leftarrow 1 - N_{\text{lower}}$\;
+    }
+
+    Store $(s, w, \text{rule}, \text{consistent}, \text{margin}, \hat{f}_e)$\;
+}
+
+\BlankLine
+\textbf{// Aggregate Statistics}\;
+\For{each rule type}{
+    Compute: $n$, consistency rate, mean margin $\pm$ std\;
+}
+
+\Return Validation DataFrame\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 7: Uncertainty Analysis
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Fan Vote Uncertainty Analysis}
+\label{alg:uncertainty}
+\KwIn{Fan share estimates with HDI, MCMC diagnostics}
+\KwOut{Uncertainty metrics and visualizations}
+
+\textbf{// Compute HDI Width}\;
+\For{each (season, week, contestant)}{
+    $\text{HDI\_width} \leftarrow \text{HDI\_upper} - \text{HDI\_lower}$\;
+}
+
+\BlankLine
+\textbf{// Analyze by Rule Type}\;
+\For{each rule type $\in$ \{rank, percentage, bottom2\}}{
+    Compute mean HDI width, distribution\;
+}
+
+\BlankLine
+\textbf{// Contestant Count vs Uncertainty}\;
+\For{each (season, week)}{
+    $n \leftarrow$ number of contestants\;
+    $\bar{w} \leftarrow$ mean HDI width for week\;
+}
+Fit linear regression: $\bar{w} = \beta_0 + \beta_1 n$\;
+Compute correlation $r$\;
+
+\BlankLine
+\textbf{// MCMC Convergence Check (S1-S2)}\;
+\For{each (season, week) in S1-S2}{
+    Check: $\hat{R}_{\max} < 1.05$, $\text{ESS}_{\min} > 400$\;
+    Flag non-converged weeks\;
+}
+
+\BlankLine
+\textbf{// Generate Visualizations}\;
+Plot (a): HDI width distribution by era (violin + box)\;
+Plot (b): Uncertainty vs contestant count (scatter + regression)\;
+Plot (c): Eliminated vs survived uncertainty (box)\;
+Plot (d): MCMC convergence (ESS bars + R-hat line)\;
+
+\Return Uncertainty analysis figures\;
+\end{algorithm}
+
+% ============================================================
+% QUESTION 2: SCORING RULE COMPARISON & CONTROVERSIAL CASES
+% ============================================================
+
+% ============================================================
+% Algorithm 8: Scoring Method Comparison
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Scoring Method Comparison (Rank vs Percentage)}
+\label{alg:scoring_compare}
+\KwIn{Fan share estimates $\hat{\mathbf{f}}$, original data $\mathcal{D}$, seasons $1$ to $27$}
+\KwOut{Rule comparison metrics: fan share changes under alternative rules}
+
+\For{each (season $s$, week $w$) with elimination}{
+    $\mathcal{W} \leftarrow$ contestants in week $w$\;
+    $e \leftarrow$ eliminated contestant\;
+    $\mathbf{s} \leftarrow$ judge scores\;
+
+    \BlankLine
+    \tcp{Compute judge components under both rules}
+    $\mathbf{r} \leftarrow \text{rank}(-\mathbf{s})$, \quad $\mathbf{p} \leftarrow n - \mathbf{r} + 1$\;
+    $\mathbf{J}_{\text{rank}} \leftarrow \mathbf{p} / \sum_i p_i$\;
+    $\mathbf{J}_{\text{pct}} \leftarrow \mathbf{s} / \sum_i s_i$\;
+
+    \BlankLine
+    \tcp{Determine actual rule and compute counterfactual}
+    $\text{actual} \leftarrow \begin{cases} \text{rank} & s \leq 2 \\ \text{percentage} & s > 2 \end{cases}$\;
+
+    \BlankLine
+    \tcp{Compute required fan share under counterfactual rule}
+    $\mathbf{J}_{\text{cf}} \leftarrow \begin{cases} \mathbf{J}_{\text{pct}} & \text{actual} = \text{rank} \\ \mathbf{J}_{\text{rank}} & \text{otherwise} \end{cases}$\;
+
+    $\Delta J_e \leftarrow \min_{i \neq e} J_{\text{cf},i} - J_{\text{cf},e}$\;
+    $f_{\text{critical}} \leftarrow \Delta J_e \cdot \frac{n-1}{n} + \frac{1}{n}$\;
+
+    Store $(s, w, \hat{f}_e, f_{\text{critical}}, \text{actual})$\;
+}
+
+\BlankLine
+\textbf{// Aggregate by Rule Type}\;
+\For{each rule $\in$ \{rank, percentage\}}{
+    $\bar{f}_{\text{elim}} \leftarrow$ mean eliminated fan share under this rule\;
+    $\bar{f}_{\text{cf}} \leftarrow$ mean counterfactual critical share\;
+}
+$\text{Conclusion} \leftarrow (\bar{f}_{\text{elim}}^{\text{pct}} > \bar{f}_{\text{elim}}^{\text{rank}})$ implies percentage favors fans\;
+
+\Return Rule comparison DataFrame\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 9: Controversial Contestant Identification
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Controversial Contestant Identification}
+\label{alg:controversial}
+\KwIn{Original data $\mathcal{D}$, threshold $K=15$}
+\KwOut{Top $K$ controversial contestants with controversy scores}
+
+\For{each contestant $c$ in $\mathcal{D}$}{
+    $R_{\text{final}} \leftarrow$ final placement rank of $c$\;
+    $W_{\text{total}} \leftarrow$ total weeks competed\;
+    $W_{\text{bottom}} \leftarrow 0$, \quad $W_{\text{bottom2}} \leftarrow 0$\;
+
+    \BlankLine
+    \For{each week $w$ contestant $c$ participated}{
+        $\mathbf{s}_w \leftarrow$ all judge scores in week $w$\;
+        $r_c \leftarrow \text{rank}(s_c)$ using min method (1 = lowest)\;
+
+        \If{$r_c = 1$}{
+            $W_{\text{bottom}} \leftarrow W_{\text{bottom}} + 1$\;
+        }
+        \If{$r_c \leq 2$}{
+            $W_{\text{bottom2}} \leftarrow W_{\text{bottom2}} + 1$\;
+        }
+    }
+
+    \BlankLine
+    \tcp{Controversy score: low scores but high placement}
+    \uIf{$R_{\text{final}} \leq 5$}{
+        $\text{score}_c \leftarrow \frac{W_{\text{bottom}}}{R_{\text{final}}} + \frac{W_{\text{bottom2}}}{2 \cdot R_{\text{final}}}$\;
+    }
+    \Else{
+        $\text{score}_c \leftarrow \frac{W_{\text{bottom}}}{2 \cdot R_{\text{final}}}$\;
+    }
+}
+
+Sort contestants by $\text{score}_c$ descending\;
+\Return Top $K$ contestants\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 10: Counterfactual Survival Simulation
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Monte Carlo Counterfactual Survival Simulation}
+\label{alg:survival_sim}
+\KwIn{Week data $\mathcal{W}$, fan estimates $(\hat{f}_i, \sigma_i)$, target $t$, rule $\in$ \{rank, pct\}, $M=10000$}
+\KwOut{Survival probability $P_{\text{survive}}(t)$}
+
+$\mathbf{s} \leftarrow$ judge scores for all $n$ contestants\;
+
+\BlankLine
+\tcp{Compute judge component based on rule}
+\uIf{rule $=$ rank}{
+    $\mathbf{r} \leftarrow \text{rank}(-\mathbf{s})$, \quad $\mathbf{J} \leftarrow (n - \mathbf{r} + 1) / \sum_i (n - r_i + 1)$\;
+}
+\Else{
+    $\mathbf{J} \leftarrow \mathbf{s} / \sum_i s_i$\;
+}
+
+\BlankLine
+\tcp{Monte Carlo simulation}
+$N_{\text{survive}} \leftarrow 0$\;
+\For{$m = 1$ to $M$}{
+    \tcp{Sample fan shares from posterior}
+    \For{each contestant $i$}{
+        $\tilde{f}_i^{(m)} \sim \mathcal{N}(\hat{f}_i, \sigma_i^2)$\;
+        $\tilde{f}_i^{(m)} \leftarrow \text{clip}(\tilde{f}_i^{(m)}, 0.001, 0.999)$\;
+    }
+    $\tilde{\mathbf{f}}^{(m)} \leftarrow \tilde{\mathbf{f}}^{(m)} / \sum_i \tilde{f}_i^{(m)}$ \tcp*{Normalize}
+
+    \BlankLine
+    $\mathbf{T}^{(m)} \leftarrow 0.5 \cdot \mathbf{J} + 0.5 \cdot \tilde{\mathbf{f}}^{(m)}$\;
+    $e^{(m)} \leftarrow \arg\min_i T_i^{(m)}$\;
+
+    \If{$e^{(m)} \neq t$}{
+        $N_{\text{survive}} \leftarrow N_{\text{survive}} + 1$\;
+    }
+}
+
+\Return $P_{\text{survive}} = N_{\text{survive}} / M$\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 11: Critical Fan Share Analysis (Three Rules)
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Critical Fan Share Analysis with Bottom-2 Rule}
+\label{alg:critical_fanshare}
+\KwIn{Week data $\mathcal{W}$, target contestant $t$}
+\KwOut{Critical fan shares $(f^*_{\text{rank}}, f^*_{\text{pct}}, f^*_{\text{B2}})$, risk assessment}
+
+$\mathbf{s} \leftarrow$ judge scores, $n \leftarrow |\mathcal{W}|$\;
+$\mathbf{J}_{\text{rank}} \leftarrow$ rank-based normalized points\;
+$\mathbf{J}_{\text{pct}} \leftarrow \mathbf{s} / \sum_i s_i$\;
+
+\BlankLine
+\tcp{Critical share to avoid last place (Rank/Pct rules)}
+\SetKwFunction{FNotLast}{CriticalNotLast}
+\SetKwProg{Fn}{Function}{:}{}
+\Fn{\FNotLast{$\mathbf{J}$, $t$, $n$}}{
+    $\Delta J \leftarrow \min_{i \neq t} J_i - J_t$\;
+    \Return $\max\left(0, \min\left(1, \Delta J \cdot \frac{n-1}{n} + \frac{1}{n}\right)\right)$\;
+}
+
+$f^*_{\text{rank}} \leftarrow$ \FNotLast{$\mathbf{J}_{\text{rank}}$, $t$, $n$}\;
+$f^*_{\text{pct}} \leftarrow$ \FNotLast{$\mathbf{J}_{\text{pct}}$, $t$, $n$}\;
+
+\BlankLine
+\tcp{Critical share under Bottom-2 rule}
+$r_t \leftarrow$ score rank of $t$ (1 = lowest)\;
+$N_{\text{lower}} \leftarrow |\{i : s_i < s_t\}|$\;
+
+\uIf{$N_{\text{lower}} = 0$ \tcp*{$t$ has lowest score}}{
+    \tcp{Must avoid bottom 2; judges will eliminate}
+    $J_{\text{2nd}} \leftarrow$ judge component of 2nd lowest scorer\;
+    $f^*_{\text{B2}} \leftarrow \max\left(\FNotLast{$\mathbf{J}_{\text{pct}}$, $t$, $n$}, 0.5\right)$\;
+    $\text{risk} \leftarrow$ HIGH, \quad $\text{judge\_decision} \leftarrow$ ELIMINATE\;
+}
+\uElseIf{$N_{\text{lower}} = 1$ \tcp*{$t$ is 2nd lowest}}{
+    \tcp{If in bottom 2, judges save $t$ (not lowest)}
+    $f^*_{\text{B2}} \leftarrow$ \FNotLast{$\mathbf{J}_{\text{pct}}$, $t$, $n$}\;
+    $\text{risk} \leftarrow$ MEDIUM, \quad $\text{judge\_decision} \leftarrow$ SAVE\;
+}
+\Else{
+    \tcp{Not in bottom 2 risk zone}
+    $f^*_{\text{B2}} \leftarrow$ \FNotLast{$\mathbf{J}_{\text{pct}}$, $t$, $n$}\;
+    $\text{risk} \leftarrow$ LOW, \quad $\text{judge\_decision} \leftarrow$ N/A\;
+}
+
+\BlankLine
+\tcp{Compute rule impact gaps}
+$\Delta_{\text{pct-rank}} \leftarrow f^*_{\text{pct}} - f^*_{\text{rank}}$\;
+$\Delta_{\text{B2-pct}} \leftarrow f^*_{\text{B2}} - f^*_{\text{pct}}$\;
+
+\Return $(f^*_{\text{rank}}, f^*_{\text{pct}}, f^*_{\text{B2}}, \text{risk}, \text{judge\_decision}, \Delta_{\text{pct-rank}}, \Delta_{\text{B2-pct}})$\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 12: Controversial Cases Heatmap Visualization
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Counterfactual Survival Heatmap Generation}
+\label{alg:heatmap}
+\KwIn{Controversial contestants $\mathcal{C}$, survival simulations, original data $\mathcal{D}$}
+\KwOut{Heatmap visualization of counterfactual survival probabilities}
+
+\textbf{// Prepare Heatmap Data}\;
+\For{each contestant $c \in \mathcal{C}$}{
+    $s \leftarrow$ season of $c$\;
+    $\text{actual\_rule} \leftarrow \begin{cases} \text{rank} & s \leq 2 \\ \text{bottom2} & s \geq 28 \\ \text{percentage} & \text{otherwise} \end{cases}$\;
+
+    \For{each week $w$ contestant $c$ participated}{
+        $\tilde{s}_w \leftarrow (s_c - s_{\min}) / (s_{\max} - s_{\min})$ \tcp*{Normalized score}
+
+        \tcp{Counterfactual rule (opposite of actual)}
+        $P_{\text{cf}} \leftarrow \begin{cases}
+            P_{\text{survive}}^{\text{pct}} & \text{actual} = \text{rank} \\
+            P_{\text{survive}}^{\text{rank}} & \text{otherwise}
+        \end{cases}$\;
+
+        Add row: $(c, w, \tilde{s}_w, P_{\text{cf}}, \text{actual\_rule})$\;
+    }
+}
+
+\BlankLine
+\textbf{// Generate Heatmap}\;
+Sort contestants by final rank (winners first)\;
+$X \leftarrow$ week numbers, \quad $Y \leftarrow$ contestant labels\;
+$Z \leftarrow$ matrix of $P_{\text{cf}}$ values\;
+
+Apply diverging colormap: red ($P < 0.5$) to green ($P > 0.5$)\;
+Overlay normalized judge score as marker size\;
+Add annotations for actual rule era\;
+
+\Return Heatmap figure\;
+\end{algorithm}
+
+% ============================================================
+% QUESTION 3: CELEBRITY FEATURES & PRO PARTNER IMPACT ANALYSIS
+% ============================================================
+
+% ============================================================
+% Algorithm 13: Linear Mixed-Effects Model (LMM)
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Linear Mixed-Effects Model for Celebrity \& Partner Effects}
+\label{alg:lmm}
+\KwIn{Dataset $\mathcal{D}$ with outcomes $y^{(J)}$ (judge score), $y^{(F)}$ (log fan share), fixed effects $\mathbf{X}$, grouping factor $g$ (partner)}
+\KwOut{Fixed effects $\hat{\boldsymbol{\beta}}$, random effects $\hat{\mathbf{u}}$, ICC}
+
+\textbf{// Model Specification}\;
+Fixed effects: $\mathbf{X} = [\text{Age}, \text{Industry}_1, \ldots, \text{Industry}_k, \text{Week}, \text{StageRatio}]$\;
+Random intercept: $u_g \sim \mathcal{N}(0, \sigma_u^2)$ for each partner $g$\;
+Model: $y_{ig} = \mathbf{x}_i^\top \boldsymbol{\beta} + u_g + \varepsilon_{ig}$, \quad $\varepsilon_{ig} \sim \mathcal{N}(0, \sigma^2)$\;
+
+\BlankLine
+\textbf{// REML Estimation}\;
+Construct marginal covariance: $\mathbf{V} = \mathbf{Z}\mathbf{G}\mathbf{Z}^\top + \sigma^2 \mathbf{I}$\;
+Maximize restricted log-likelihood:\;
+\quad $\ell_R = -\frac{1}{2}\left[\log|\mathbf{V}| + \log|\mathbf{X}^\top\mathbf{V}^{-1}\mathbf{X}| + (\mathbf{y}-\mathbf{X}\hat{\boldsymbol{\beta}})^\top\mathbf{V}^{-1}(\mathbf{y}-\mathbf{X}\hat{\boldsymbol{\beta}})\right]$\;
+Estimate $\hat{\sigma}_u^2$, $\hat{\sigma}^2$ via Powell optimizer\;
+
+\BlankLine
+\textbf{// Extract Partner Random Effects (BLUPs)}\;
+$\hat{\mathbf{u}} = \mathbf{G}\mathbf{Z}^\top\mathbf{V}^{-1}(\mathbf{y} - \mathbf{X}\hat{\boldsymbol{\beta}})$\;
+
+\BlankLine
+\textbf{// Compute Intraclass Correlation (ICC)}\;
+$\rho = \frac{\hat{\sigma}_u^2}{\hat{\sigma}_u^2 + \hat{\sigma}^2}$ \tcp*{Variance explained by partner}
+
+\BlankLine
+\textbf{// Fit Both Models}\;
+$(\hat{\boldsymbol{\beta}}^{(J)}, \hat{\mathbf{u}}^{(J)}, \rho^{(J)}) \leftarrow$ fit LMM on $y^{(J)}$\;
+$(\hat{\boldsymbol{\beta}}^{(F)}, \hat{\mathbf{u}}^{(F)}, \rho^{(F)}) \leftarrow$ fit LMM on $y^{(F)}$\;
+
+\Return $\hat{\boldsymbol{\beta}}^{(J)}$, $\hat{\boldsymbol{\beta}}^{(F)}$, $\{\hat{u}_g\}$, ICC values\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 14: XGBoost + SHAP Feature Analysis
+% ============================================================
+\begin{algorithm}[htb]
+\caption{XGBoost Feature Importance with SHAP Decomposition}
+\label{alg:xgboost}
+\KwIn{Feature matrix $\mathbf{X} \in \mathbb{R}^{N \times p}$, targets $y^{(J)}$, $y^{(F)}$, params: $T=100$ trees, $d=4$ depth, $\eta=0.1$}
+\KwOut{Feature importance rankings, SHAP values for both models}
+
+\textbf{// Feature Engineering}\;
+$\mathbf{X} \leftarrow [\text{Age}, \text{Week}, \text{StageRatio}, \text{Ind}_1, \ldots, \text{Ind}_k, \text{Age}_1, \ldots, \text{Age}_m, \text{Partner}_{\text{enc}}]$\;
+$y^{(F)} \leftarrow \log(y^{(F)} + 10^{-6})$ \tcp*{Log-transform fan share}
+
+\BlankLine
+\textbf{// Train XGBoost Models}\;
+\For{target $y \in \{y^{(J)}, y^{(F)}\}$}{
+    Initialize $\hat{y}^{(0)} = 0$\;
+    \For{$t = 1$ to $T$}{
+        $g_i = \frac{\partial \ell(y_i, \hat{y}_i^{(t-1)})}{\partial \hat{y}_i^{(t-1)}}$, \quad $h_i = \frac{\partial^2 \ell}{\partial (\hat{y}_i^{(t-1)})^2}$\;
+        Fit tree $f_t$ minimizing $\sum_i [g_i f_t(\mathbf{x}_i) + \frac{1}{2} h_i f_t^2(\mathbf{x}_i)] + \Omega(f_t)$\;
+        $\hat{y}^{(t)} = \hat{y}^{(t-1)} + \eta \cdot f_t(\mathbf{x})$\;
+    }
+}
+
+\BlankLine
+\textbf{// SHAP Value Computation (TreeExplainer)}\;
+\For{each model $\mathcal{M} \in \{\mathcal{M}_J, \mathcal{M}_F\}$}{
+    \For{each sample $\mathbf{x}_i$ and feature $j$}{
+        $\phi_j(\mathbf{x}_i) = \sum_{S \subseteq \mathcal{F} \setminus \{j\}} \frac{|S|!(p-|S|-1)!}{p!} \left[ f_\mathcal{M}(S \cup \{j\}) - f_\mathcal{M}(S) \right]$\;
+    }
+}
+
+\BlankLine
+\textbf{// Feature Importance Ranking}\;
+\For{each feature $j$}{
+    $I_j = \frac{1}{N} \sum_{i=1}^{N} |\phi_j(\mathbf{x}_i)|$ \tcp*{Mean absolute SHAP}
+}
+
+\Return Rankings $\mathcal{R}^{(J)}$, $\mathcal{R}^{(F)}$, SHAP matrices $\Phi^{(J)}$, $\Phi^{(F)}$\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 15: Bootstrap Effect Difference Test
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Bootstrap Test for Judge vs Fan Effect Differences}
+\label{alg:bootstrap}
+\KwIn{Dataset $\mathcal{D}$, feature $f$, bootstrap iterations $B=1000$}
+\KwOut{Effect estimates, confidence intervals, p-values}
+
+\textbf{// Standardize Outcomes}\;
+$y^{(J)} \leftarrow$ standardized judge score (z-score)\;
+$y^{(F)} \leftarrow$ standardized log fan share\;
+
+\BlankLine
+\textbf{// Bootstrap Resampling}\;
+$\mathcal{B}_{\text{diff}} \leftarrow \emptyset$\;
+\For{$b = 1$ to $B$}{
+    Sample $\mathcal{D}^{(b)}$ with replacement from $\mathcal{D}$\;
+    Fit $\hat{\beta}^{(J,b)} \leftarrow$ OLS of $y^{(J)}$ on $f$ using $\mathcal{D}^{(b)}$\;
+    Fit $\hat{\beta}^{(F,b)} \leftarrow$ OLS of $y^{(F)}$ on $f$ using $\mathcal{D}^{(b)}$\;
+    $\mathcal{B}_{\text{diff}} \leftarrow \mathcal{B}_{\text{diff}} \cup \{\hat{\beta}^{(J,b)} - \hat{\beta}^{(F,b)}\}$\;
+}
+
+\BlankLine
+\textbf{// Original Estimates}\;
+$\hat{\beta}^{(J)} \leftarrow$ OLS on full $\mathcal{D}$, \quad $\hat{\beta}^{(F)} \leftarrow$ OLS on full $\mathcal{D}$\;
+$\hat{\Delta} \leftarrow \hat{\beta}^{(J)} - \hat{\beta}^{(F)}$\;
+
+\BlankLine
+\textbf{// Confidence Interval \& p-value}\;
+$\text{CI}_{95\%} \leftarrow [\text{percentile}(\mathcal{B}_{\text{diff}}, 2.5), \text{percentile}(\mathcal{B}_{\text{diff}}, 97.5)]$\;
+$p \leftarrow 2 \cdot \min\left( \frac{|\{d \in \mathcal{B}_{\text{diff}} : d > 0\}|}{B}, \frac{|\{d \in \mathcal{B}_{\text{diff}} : d < 0\}|}{B} \right)$\;
+$\text{significant} \leftarrow (\text{CI}_{\text{lower}} > 0) \vee (\text{CI}_{\text{upper}} < 0)$\;
+
+\Return $(\hat{\beta}^{(J)}, \hat{\beta}^{(F)}, \hat{\Delta}, \text{CI}_{95\%}, p, \text{significant})$\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 16: Interaction Effect Heatmap
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Age $\times$ Industry Interaction Effect Visualization}
+\label{alg:interaction}
+\KwIn{Dataset $\mathcal{D}$ with age, industry, $y^{(J)}$, $y^{(F)}$}
+\KwOut{Interaction heatmaps for judges and fans}
+
+\textbf{// Create Age Bins}\;
+$\text{AgeBin} \leftarrow \begin{cases}
+    \text{``<25''} & \text{if age} < 25 \\
+    \text{``25-35''} & \text{if } 25 \leq \text{age} < 35 \\
+    \text{``35-45''} & \text{if } 35 \leq \text{age} < 45 \\
+    \text{``45-55''} & \text{if } 45 \leq \text{age} < 55 \\
+    \text{``55+''} & \text{if age} \geq 55
+\end{cases}$\;
+
+\BlankLine
+\textbf{// Compute Cell Means}\;
+\For{each industry $I \in \mathcal{I}$}{
+    \For{each age bin $A \in \mathcal{A}$}{
+        $\mu_{I,A}^{(J)} \leftarrow \text{mean}(y^{(J)} | \text{Industry}=I, \text{AgeBin}=A)$\;
+        $\mu_{I,A}^{(F)} \leftarrow \text{mean}(y^{(F)} | \text{Industry}=I, \text{AgeBin}=A)$\;
+        $n_{I,A} \leftarrow$ count of samples in cell\;
+    }
+}
+
+\BlankLine
+\textbf{// Standardize Fan Share Matrix}\;
+$\tilde{\mu}^{(F)} \leftarrow \frac{\mu^{(F)} - \bar{\mu}^{(F)}}{\text{std}(\mu^{(F)})}$\;
+
+\BlankLine
+\textbf{// Compute Difference Matrix}\;
+$\Delta_{I,A} \leftarrow \mu_{I,A}^{(J)} - \tilde{\mu}_{I,A}^{(F)}$\;
+
+\BlankLine
+\textbf{// Generate Heatmaps}\;
+Plot Judge Score heatmap: $\mathbf{M}^{(J)}$ with RdYlGn colormap\;
+Plot Fan Vote heatmap: $\tilde{\mathbf{M}}^{(F)}$ with RdYlGn colormap\;
+Plot Difference heatmap: $\boldsymbol{\Delta}$ with PuOr colormap\;
+Annotate cells with values and sample sizes\;
+
+\Return Heatmap figures\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 17: Cox Proportional Hazards Survival Model
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Cox Proportional Hazards Model for Elimination Risk}
+\label{alg:cox}
+\KwIn{Survival data: time $T_i$ (weeks survived), event $\delta_i$ (1=eliminated, 0=winner), covariates $\mathbf{x}_i$}
+\KwOut{Hazard ratios, survival curves, partner effects}
+
+\textbf{// Prepare Survival Data}\;
+\For{each contestant $c$ in season $s$}{
+    $T_c \leftarrow$ eliminated\_week (or max week if winner)\;
+    $\delta_c \leftarrow \mathbf{1}[\text{final\_rank} > 1]$ \tcp*{1=eliminated, 0=censored}
+    $\mathbf{x}_c \leftarrow [\text{Age}, \text{Ind}_1, \ldots, \text{Ind}_k, \text{Age}_{\text{U25}}, \text{Age}_{40-55}, \text{Age}_{55+}]$\;
+}
+
+\BlankLine
+\textbf{// Cox Model: Partial Likelihood Estimation}\;
+Hazard function: $h(t|\mathbf{x}) = h_0(t) \exp(\boldsymbol{\beta}^\top \mathbf{x})$\;
+Partial log-likelihood:\;
+\quad $\ell(\boldsymbol{\beta}) = \sum_{i:\delta_i=1} \left[ \boldsymbol{\beta}^\top \mathbf{x}_i - \log \sum_{j \in \mathcal{R}(t_i)} \exp(\boldsymbol{\beta}^\top \mathbf{x}_j) \right]$\;
+where $\mathcal{R}(t)$ is risk set at time $t$\;
+
+Maximize $\ell(\boldsymbol{\beta})$ via Newton-Raphson\;
+
+\BlankLine
+\textbf{// Compute Hazard Ratios}\;
+\For{each covariate $k$}{
+    $\text{HR}_k = \exp(\hat{\beta}_k)$\;
+    $\text{CI}_{95\%} = [\exp(\hat{\beta}_k - 1.96 \cdot \text{SE}_k), \exp(\hat{\beta}_k + 1.96 \cdot \text{SE}_k)]$\;
+    \lIf{$\text{HR}_k > 1$}{Higher elimination risk}
+    \lElse{Lower elimination risk (protective)}
+}
+
+\BlankLine
+\textbf{// Kaplan-Meier Survival Curves by Group}\;
+\For{each group $G \in \{\text{Industries}, \text{AgeBrackets}\}$}{
+    $\hat{S}_G(t) = \prod_{t_i \leq t} \left(1 - \frac{d_i}{n_i}\right)$ \tcp*{K-M estimator}
+    where $d_i$ = events at $t_i$, $n_i$ = at risk at $t_i$\;
+}
+
+\BlankLine
+\textbf{// Pro Partner Survival Analysis}\;
+\For{each partner $g$ with $n_g \geq 5$}{
+    $\tilde{T}_g \leftarrow$ median survival time\;
+    $\text{WinRate}_g \leftarrow \frac{|\{c : \text{rank}_c = 1, \text{partner}_c = g\}|}{n_g}$\;
+    $\text{Top3Rate}_g \leftarrow \frac{|\{c : \text{rank}_c \leq 3, \text{partner}_c = g\}|}{n_g}$\;
+}
+
+\Return Hazard ratios, K-M curves, partner survival statistics\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 18: Comprehensive Model Validation
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Cross-Validation of LMM, XGBoost, and Cox Models}
+\label{alg:validation}
+\KwIn{Results from Algorithms~\ref{alg:lmm}, \ref{alg:xgboost}, \ref{alg:cox}}
+\KwOut{Consistency assessment across models}
+
+\textbf{// Extract Effect Directions}\;
+\For{each feature $f \in \{\text{Age}, \text{Industries}, \text{AgeBrackets}\}$}{
+    $\text{sign}_{\text{LMM}}^{(J)} \leftarrow \text{sign}(\hat{\beta}_f^{(J)})$ \tcp*{LMM judge effect}
+    $\text{sign}_{\text{LMM}}^{(F)} \leftarrow \text{sign}(\hat{\beta}_f^{(F)})$ \tcp*{LMM fan effect}
+    $\text{sign}_{\text{XGB}} \leftarrow \text{sign}(\bar{\phi}_f)$ \tcp*{Mean SHAP direction}
+    $\text{sign}_{\text{Cox}} \leftarrow \text{sign}(\log \text{HR}_f)$ \tcp*{Cox risk direction}
+}
+
+\BlankLine
+\textbf{// Consistency Check}\;
+\For{each feature $f$}{
+    $\text{consistent}_f \leftarrow (\text{sign}_{\text{LMM}}^{(J)} = \text{sign}_{\text{XGB}}) \wedge (\text{sign}_{\text{LMM}}^{(J)} = -\text{sign}_{\text{Cox}})$\;
+    \tcp{Higher score $\Rightarrow$ lower elimination risk}
+}
+
+\BlankLine
+\textbf{// Partner Effect Consistency}\;
+Compute Spearman correlation:\;
+$r_{\text{LMM-Cox}} = \text{corr}(\hat{u}_g^{\text{LMM}}, \text{Top3Rate}_g^{\text{Cox}})$\;
+
+\BlankLine
+\textbf{// Summary Table}\;
+\For{each feature}{
+    Report: LMM $\hat{\beta}$, XGBoost SHAP rank, Cox HR, consistency flag\;
+}
+
+\Return Validation report with consistency metrics\;
+\end{algorithm}
+
+% ============================================================
+% QUESTION 4: OPTIMAL VOTING SYSTEM DESIGN
+% ============================================================
+
+% ============================================================
+% Algorithm 19: Multi-Objective Pareto Optimization
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Multi-Objective Optimization with Pareto Frontier}
+\label{alg:pareto}
+\KwIn{Merged data $\mathcal{D}$ with judge scores and fan shares, weight grid $\mathbf{w} = [0, 0.05, \ldots, 1]$}
+\KwOut{Pareto frontier, objective values for each weight}
+
+\textbf{// Define Objective Functions}\;
+\For{each weight $w \in \mathbf{w}$}{
+    \For{each (season, week) with $|\mathcal{W}| \geq 3$}{
+        \tcp{Simulate elimination}
+        $\tilde{s}_i \leftarrow$ min-max normalized judge score\;
+        $\tilde{f}_i \leftarrow$ normalized fan share ($\sum_i \tilde{f}_i = 1$)\;
+        $T_i \leftarrow w \cdot \tilde{s}_i + (1-w) \cdot \tilde{f}_i$\;
+        $e \leftarrow \arg\min_i T_i$ \tcp*{Eliminated contestant}
+        $r_e \leftarrow$ judge rank of eliminated (1 = highest)\;
+
+        \tcp{Track metrics}
+        $\text{fairness}_w \leftarrow r_e / n$ \tcp*{Higher = eliminated low scorer}
+        $\text{robbery}_w \leftarrow \mathbf{1}[r_e \leq 2]$ \tcp*{Top-2 eliminated}
+        $\text{decisive}_w \leftarrow \mathbf{1}[e \neq e_{w=1}]$ \tcp*{Fan changed outcome}
+    }
+
+    \tcp{Aggregate objectives}
+    $F_w \leftarrow \bar{\text{fairness}}_w$\;
+    $E_w \leftarrow \bar{\text{decisive}}_w$ \tcp*{Engagement}
+    $R_w \leftarrow 1 - \bar{\text{robbery}}_w$ \tcp*{No-Robbery rate}
+}
+
+\BlankLine
+\textbf{// Construct Pareto Frontier}\;
+Sort solutions by engagement descending\;
+$\mathcal{P} \leftarrow \{(E_w, F_w, R_w) : w \in \mathbf{w}\}$\;
+
+\Return Pareto frontier $\mathcal{P}$, objective values\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 20: Knee Point Analysis (Kneedle + Marginal Cost)
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Knee Point Detection for Optimal Weight Selection}
+\label{alg:knee}
+\KwIn{Pareto frontier $\mathcal{P} = \{(E_i, F_i)\}_{i=1}^{n}$, corresponding weights $\mathbf{w}$}
+\KwOut{Knee points $w^*_{\text{Kneedle}}$, $w^*_{\text{marginal}}$}
+
+\textbf{// Method 1: Kneedle Algorithm}\;
+\tcp{Normalize to $[0,1]$}
+$\tilde{E}_i \leftarrow (E_i - E_{\min}) / (E_{\max} - E_{\min})$\;
+$\tilde{F}_i \leftarrow (F_i - F_{\min}) / (F_{\max} - F_{\min})$\;
+
+\tcp{Line from first to last point: $ax + by + c = 0$}
+$a \leftarrow \tilde{F}_n - \tilde{F}_1$, \quad $b \leftarrow -(\tilde{E}_n - \tilde{E}_1)$\;
+$c \leftarrow (\tilde{E}_n - \tilde{E}_1)\tilde{F}_1 - (\tilde{F}_n - \tilde{F}_1)\tilde{E}_1$\;
+
+\For{each point $i$}{
+    $d_i \leftarrow \frac{a \tilde{E}_i + b \tilde{F}_i + c}{\sqrt{a^2 + b^2}}$ \tcp*{Distance to baseline}
+}
+$i^*_{\text{Kneedle}} \leftarrow \arg\max_i d_i$\;
+$w^*_{\text{Kneedle}} \leftarrow w_{i^*}$\;
+
+\BlankLine
+\textbf{// Method 2: Marginal Cost Analysis}\;
+\For{$i = 2$ to $n$}{
+    $\Delta F \leftarrow F_i - F_{i-1}$\;
+    $\Delta E \leftarrow E_i - E_{i-1}$\;
+    $\text{MC}_i \leftarrow \begin{cases} -\Delta F / \Delta E & |\Delta E| > 0.001 \\ 0 & \text{otherwise} \end{cases}$\;
+}
+
+$\text{MC}_{\max} \leftarrow \max_i \text{MC}_i$\;
+$i^*_{\text{marginal}} \leftarrow \min\{i : \text{MC}_i < 0.5 \cdot \text{MC}_{\max} \wedge \text{MC}_{i-1} \geq 0.5 \cdot \text{MC}_{\max}\}$\;
+$w^*_{\text{marginal}} \leftarrow w_{i^*}$\;
+
+\Return $w^*_{\text{Kneedle}}$, $w^*_{\text{marginal}}$\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 21: Dynamic Sigmoid Weight Model
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Dynamic Sigmoid Weight Function with Grid Search}
+\label{alg:sigmoid}
+\KwIn{Knee points $w_{\min}^* \approx 0.2$, $w_{\max}^* \approx 0.6$, parameter grids}
+\KwOut{Optimal sigmoid parameters $(w_{\min}, w_{\max}, k)$}
+
+\textbf{// Sigmoid Weight Function}\;
+\SetKwFunction{FSigmoid}{SigmoidWeight}
+\SetKwProg{Fn}{Function}{:}{}
+\Fn{\FSigmoid{$t$, $t_{\max}$, $w_{\min}$, $w_{\max}$, $k$}}{
+    $t_{\text{mid}} \leftarrow t_{\max} / 2$\;
+    $t_{\text{norm}} \leftarrow (t - t_{\text{mid}}) / (t_{\max} / 4)$\;
+    \Return $w_{\min} + \frac{w_{\max} - w_{\min}}{1 + \exp(-k \cdot t_{\text{norm}})}$\;
+}
+
+\BlankLine
+\textbf{// Grid Search Optimization}\;
+$\mathcal{G} \leftarrow \{0.2, 0.3, 0.4\} \times \{0.6, 0.7, 0.8\} \times \{0.5, 1.0, 1.5, 1.9, 2.0\}$\;
+
+\For{each $(w_{\min}, w_{\max}, k) \in \mathcal{G}$ with $w_{\min} < w_{\max}$}{
+    \For{each season $s$}{
+        \For{each week $t$}{
+            $w(t) \leftarrow$ \FSigmoid{$t$, $t_{\max}^s$, $w_{\min}$, $w_{\max}$, $k$}\;
+            Simulate elimination with weight $w(t)$\;
+        }
+    }
+    Compute $(F, E, R)$ for this parameter set\;
+    $\text{composite} \leftarrow 0.4 \cdot F + 0.3 \cdot E + 0.3 \cdot R$\;
+}
+
+$(w_{\min}^*, w_{\max}^*, k^*) \leftarrow \arg\max \text{composite}$\;
+
+\Return Optimal parameters: $w_{\min}^* = 0.2$, $w_{\max}^* = 0.6$, $k^* = 1.9$\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 22: Bottom-2 Hybrid Rule Integration
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Hybrid Dynamic Weight with Week-7 Bottom-2 Rule}
+\label{alg:hybrid}
+\KwIn{Season data, sigmoid params $(w_{\min}, w_{\max}, k)$, switch week $t_{\text{B2}} = 7$}
+\KwOut{Elimination decision for each week}
+
+\For{each week $t$ in season}{
+    $w(t) \leftarrow$ \texttt{SigmoidWeight}$(t, t_{\max}, w_{\min}, w_{\max}, k)$\;
+    $T_i \leftarrow w(t) \cdot \tilde{s}_i + (1 - w(t)) \cdot \tilde{f}_i$ for all $i$\;
+
+    \uIf{$t < t_{\text{B2}}$}{
+        \tcp{Standard elimination: lowest total score}
+        $e \leftarrow \arg\min_i T_i$\;
+    }
+    \Else{
+        \tcp{Bottom-2 rule: judges decide between lowest two}
+        $(b_1, b_2) \leftarrow$ two contestants with lowest $T_i$\;
+        \uIf{$s_{b_1} < s_{b_2}$}{
+            $e \leftarrow b_1$ \tcp*{Judges eliminate lower scorer}
+        }
+        \Else{
+            $e \leftarrow b_2$\;
+        }
+    }
+    Record elimination $e$ and metrics\;
+}
+
+\Return Season elimination sequence, fairness/engagement metrics\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 23: Historical Case Validation
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Controversial Case Validation with Proposed System}
+\label{alg:historical}
+\KwIn{Historical cases $\mathcal{C} = \{$Bobby Bones, Jerry Rice, Sabrina Bryan, Bristol Palin$\}$}
+\KwOut{Comparison of outcomes under current vs proposed system}
+
+\textbf{// Define Systems}\;
+$\mathcal{S}_{\text{current}} \leftarrow w = 0.5$ (fixed)\;
+$\mathcal{S}_{\text{proposed}} \leftarrow w(t) = 0.2 + 0.4 / (1 + \exp(-1.9 \cdot t_{\text{norm}}))$\;
+
+\BlankLine
+\textbf{// Simulate Each Case}\;
+\For{each case $(c, s) \in \mathcal{C}$}{
+    $\mathcal{D}_s \leftarrow$ season $s$ data\;
+
+    \For{each week $t$ contestant $c$ participated}{
+        \tcp{Current system simulation}
+        Rank $c$ by combined score with $w = 0.5$\;
+        $r_{\text{current}}(t) \leftarrow$ combined rank of $c$\;
+
+        \tcp{Proposed system simulation}
+        $w(t) \leftarrow$ \texttt{SigmoidWeight}$(t, t_{\max}, 0.2, 0.6, 1.9)$\;
+        Rank $c$ by combined score with $w(t)$\;
+        $r_{\text{proposed}}(t) \leftarrow$ combined rank of $c$\;
+
+        $\text{at\_risk}_{\text{current}}(t) \leftarrow \mathbf{1}[r_{\text{current}}(t) = n]$\;
+        $\text{at\_risk}_{\text{proposed}}(t) \leftarrow \mathbf{1}[r_{\text{proposed}}(t) = n]$\;
+    }
+
+    Store trajectory $\{r_{\text{current}}(t), r_{\text{proposed}}(t)\}_{t=1}^{T_c}$\;
+}
+
+\BlankLine
+\textbf{// Count Robberies System-Wide}\;
+\For{each system $\mathcal{S} \in \{\mathcal{S}_{\text{current}}, \mathcal{S}_{\text{proposed}}\}$}{
+    $N_{\text{robbery}}^{\mathcal{S}} \leftarrow |\{(s,w) : \text{eliminated had judge rank} \leq 2\}|$\;
+}
+
+$\Delta_{\text{robbery}} \leftarrow N_{\text{robbery}}^{\text{current}} - N_{\text{robbery}}^{\text{proposed}}$\;
+
+\Return Case trajectories, robbery reduction $\Delta_{\text{robbery}}$\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 24: Total Benefit Maximization
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Composite Benefit Function Optimization}
+\label{alg:benefit}
+\KwIn{Objective values $(F, E, R)$ for each system configuration}
+\KwOut{Optimal configuration maximizing total benefit}
+
+\textbf{// Define Composite Benefit}\;
+$B(F, E, R) = \alpha_F \cdot F + \alpha_E \cdot E + \alpha_R \cdot R$\;
+where $\alpha_F = 0.4$, $\alpha_E = 0.3$, $\alpha_R = 0.3$\;
+
+\BlankLine
+\textbf{// Compare Configurations}\;
+$B_{\text{current}} \leftarrow B(F_{w=0.5}, E_{w=0.5}, R_{w=0.5})$\;
+$B_{\text{sigmoid}} \leftarrow B(F_{\text{sigmoid}}, E_{\text{sigmoid}}, R_{\text{sigmoid}})$\;
+$B_{\text{hybrid}} \leftarrow B(F_{\text{hybrid}}, E_{\text{hybrid}}, R_{\text{hybrid}})$\;
+
+\BlankLine
+\textbf{// Select Best System}\;
+$\mathcal{S}^* \leftarrow \arg\max_{\mathcal{S}} B(\mathcal{S})$\;
+
+\BlankLine
+\textbf{// Quantify Improvements}\;
+$\Delta_{\text{fairness}} \leftarrow F^* - F_{\text{current}}$\;
+$\Delta_{\text{engagement}} \leftarrow E^* - E_{\text{current}}$\;
+$\Delta_{\text{robbery}} \leftarrow R^* - R_{\text{current}}$\;
+
+\Return Optimal system $\mathcal{S}^*$, improvements $(\Delta_F, \Delta_E, \Delta_R)$\;
+\end{algorithm}
+
+% ============================================================
+% SENSITIVITY ANALYSIS - Model Robustness Verification
+% ============================================================
+
+% ============================================================
+% Algorithm 25: Temporal Robustness Analysis (Q3)
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Temporal Sensitivity Analysis: Era Comparison}
+\label{alg:temporal_sensitivity}
+\KwIn{Feature data $\mathcal{D}$, era split point $s_{\text{split}} = 15$}
+\KwOut{Era-specific coefficients and stability assessment}
+
+\textbf{// Split Data by Era}\;
+$\mathcal{D}_{\text{early}} \leftarrow \{d \in \mathcal{D} : s_d \leq s_{\text{split}}\}$ \tcp*{S1-S15}
+$\mathcal{D}_{\text{late}} \leftarrow \{d \in \mathcal{D} : s_d > s_{\text{split}}\}$ \tcp*{S16-S31}
+
+\BlankLine
+\textbf{// Define LMM Formula}\;
+Formula: $\text{score\_zscore} \sim \text{age} + \mathbf{C}(\text{Industry}) + \text{week}$\;
+Random effect: $(\text{ballroom\_partner})$\;
+
+\BlankLine
+\textbf{// Fit LMM for Each Era}\;
+\For{each dataset $\mathcal{D}_e \in \{\mathcal{D}_{\text{full}}, \mathcal{D}_{\text{early}}, \mathcal{D}_{\text{late}}\}$}{
+    Fit mixed model: $\text{score} = \mathbf{X}\boldsymbol{\beta} + \mathbf{Z}\mathbf{u} + \boldsymbol{\epsilon}$\;
+
+    \tcp{Extract key coefficients}
+    $\beta_{\text{age}}^{(e)} \leftarrow$ coefficient for age\;
+    $\text{CI}_{\text{age}}^{(e)} \leftarrow$ 95\% confidence interval\;
+
+    $\beta_{\text{Model}}^{(e)} \leftarrow$ coefficient for Industry = Model\;
+    $\text{CI}_{\text{Model}}^{(e)} \leftarrow$ 95\% confidence interval\;
+
+    \tcp{Calculate Intraclass Correlation}
+    $\sigma_{\text{partner}}^2 \leftarrow \text{Var}(\mathbf{u})$\;
+    $\sigma_{\epsilon}^2 \leftarrow \text{Var}(\boldsymbol{\epsilon})$\;
+    $\text{ICC}^{(e)} \leftarrow \sigma_{\text{partner}}^2 / (\sigma_{\text{partner}}^2 + \sigma_{\epsilon}^2)$\;
+
+    Store $(\beta_{\text{age}}^{(e)}, \beta_{\text{Model}}^{(e)}, \text{ICC}^{(e)}, \text{CI})$\;
+}
+
+\BlankLine
+\textbf{// Assess Stability}\;
+$\Delta_{\text{age}} \leftarrow \beta_{\text{age}}^{\text{late}} - \beta_{\text{age}}^{\text{early}}$\;
+$\Delta_{\text{Model}} \leftarrow \beta_{\text{Model}}^{\text{late}} - \beta_{\text{Model}}^{\text{early}}$\;
+$\Delta_{\text{ICC}} \leftarrow \text{ICC}^{\text{late}} - \text{ICC}^{\text{early}}$\;
+
+\BlankLine
+\tcp{Robustness criteria}
+Stable $\leftarrow$ (sign($\beta_{\text{age}}^{\text{early}}) = $ sign($\beta_{\text{age}}^{\text{late}}$)) $\land$
+(sign($\beta_{\text{Model}}^{\text{early}}) = $ sign($\beta_{\text{Model}}^{\text{late}}$))\;
+
+\Return Era coefficients, confidence intervals, $(\Delta_{\text{age}}, \Delta_{\text{Model}}, \Delta_{\text{ICC}})$, Stable\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 26: Parameter Sensitivity Heatmap (Q4)
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Parameter Sensitivity Analysis}
+\label{alg:parameter_sensitivity}
+\KwIn{Data $\mathcal{D}$, $w_{\max} \in [0.5, 0.7]$, $k \in [1.0, 3.0]$}
+\KwOut{Sensitivity heatmap $\mathbf{M}$, optimal parameters}
+
+Initialize grid $\mathbf{M}_{21 \times 21}$, $w_{\min} \leftarrow 0.20$\;
+
+\For{each $w_{\max} \in \text{linspace}(0.50, 0.70, 21)$}{
+    \For{each $k \in \text{linspace}(1.0, 3.0, 21)$}{
+        \For{each $(s, t) \in \mathcal{D}$}{
+            $w(t) \leftarrow w_{\min} + (w_{\max} - w_{\min}) / (1 + \exp(-k \cdot t_{\text{norm}}))$\;
+            $T_i \leftarrow w(t) \cdot \tilde{s}_i + (1-w(t)) \cdot \tilde{f}_i$\;
+        }
+        $F \leftarrow$ mean relative rank of eliminated\;
+        $R \leftarrow$ robbery rate (judge rank $\leq 2$)\;
+        $E \leftarrow 1 - \bar{w}$\;
+        $\mathbf{M}[w_{\max}, k] \leftarrow 0.4 F + 0.3 E + 0.3 (1 - R)$\;
+    }
+}
+$(w_{\max}^*, k^*) \leftarrow (0.60, 1.90)$ from optimal region\;
+
+\Return Heatmap $\mathbf{M}$, optimal $(w_{\max}^*, k^*)$\;
+\end{algorithm}
+
+% ============================================================
+% Algorithm 27: Monte Carlo Noise Robustness (Q4)
+% ============================================================
+\begin{algorithm}[htb]
+\caption{Monte Carlo Noise Robustness Analysis}
+\label{alg:monte_carlo}
+\KwIn{Season data, $N_{\text{sim}} = 50000$, $\sigma_{\text{noise}} = 0.15$, targets $\mathcal{T}$}
+\KwOut{Rank trajectories with 95\% CI, danger probabilities}
+
+\For{each target $(c, s) \in \mathcal{T}$}{
+    $\mathcal{D}_s \leftarrow$ season $s$ data, initialize $\mathbf{R}_c$\;
+
+    \For{$i = 1$ \KwTo $N_{\text{sim}}$}{
+        $\boldsymbol{\epsilon} \sim \mathcal{N}(0, \sigma_{\text{noise}}^2)$\;
+        $\tilde{f}_{\text{noisy}} \leftarrow \text{clip}(\tilde{f} \cdot (1 + \boldsymbol{\epsilon}), 0.001, 0.999)$\;
+        $\tilde{f}_{\text{norm}} \leftarrow \tilde{f}_{\text{noisy}} / \sum_j \tilde{f}_{\text{noisy},j}$\;
+
+        \For{each week $t$}{
+            $w(t) \leftarrow$ \texttt{SigmoidWeight}$(t, t_{\max}, 0.20, 0.60, 1.90)$\;
+            $T_i \leftarrow w(t) \cdot \tilde{s}_i + (1-w(t)) \cdot \tilde{f}_{\text{norm},i}$\;
+            $r_c^{(i)}(t) \leftarrow$ rank of $c$\;
+        }
+        Append $\{r_c^{(i)}(t)\}_{t}$ to $\mathbf{R}_c$\;
+    }
+
+    \For{each week $t$}{
+        $\bar{r}_c(t) \leftarrow \text{mean}(\mathbf{R}_c[:, t])$\;
+        $\text{CI}_{95}(t) \leftarrow [\text{quantile}_{0.025}, \text{quantile}_{0.975}]$\;
+        $P_{\text{danger}}(t) \leftarrow \text{Pr}(r_c(t) \leq 2)$\;
+    }
+}
+
+\Return Trajectories $\{\bar{r}_c(t), \text{CI}_{95}(t)\}$, $P_{\text{danger}}$\;
+\end{algorithm}
+
+\end{document}

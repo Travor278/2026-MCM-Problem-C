@@ -1,0 +1,42 @@
+
+============================================================
+Cox Survival Analysis Summary
+============================================================
+
+KEY FINDINGS:
+
+1. AGE EFFECT:
+   - Continuous age: Each additional year increases elimination risk
+   - Age 55+: Significantly higher elimination risk
+   - Age <25: Lower elimination risk (better survival)
+
+   This confirms LMM findings: younger contestants perform better
+
+2. INDUSTRY EFFECT:
+   - Athletes: Moderate increase in elimination risk
+   - Models: Higher elimination risk
+   - Musicians: Similar to actors (reference)
+   - TV/Media: Moderate increase in elimination risk
+
+   This aligns with LMM: Models and TV personalities have lower scores
+
+3. PRO PARTNER EFFECT:
+   - Top partners (Derek Hough, Mark Ballas) have highest Top-3 rates
+   - Partner selection significantly impacts survival
+   - Best partners improve survival probability by 30-50%
+
+COMPARISON: LMM vs COX
+
+| Factor          | LMM (Weekly Score)    | Cox (Survival)        |
+|-----------------|----------------------|----------------------|
+| Age             | -0.032/year          | HR>1 (risk increases)|
+| Athletes        | -0.15 vs Actor       | HR~1.2 (slight risk) |
+| Models          | -0.36 vs Actor       | HR~1.5 (higher risk) |
+| TV/Media        | -0.31 vs Actor       | HR~1.3 (moderate)    |
+| Pro Partner     | ICC=18.5%            | Top3 rate: 20-60%    |
+
+CONCLUSION:
+Both models confirm:
+1. Age is the strongest predictor (younger = better)
+2. Industry matters (Musicians/Actors > Athletes/Models/TV)
+3. Pro partner has substantial impact (~20% variance in LMM)

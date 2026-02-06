@@ -1,0 +1,28 @@
+
+EFFECT DIFFERENCE ANALYSIS SUMMARY
+==================================
+
+1. AGE EFFECT:
+   - Age has STRONGER negative effect on Judge Score than on Fan Vote
+   - Judges penalize older contestants more than fans do
+   - Difference is statistically significant
+
+2. INDUSTRY EFFECTS:
+   - Athletes: Judges are harsher than fans (significant)
+   - Models: Both judges and fans rate lower, but judges even more so
+   - Musicians: Similar treatment by judges and fans
+
+3. STAGE EFFECT (week/stage_ratio):
+   - Fan vote share concentrates as competition progresses
+   - This mechanical effect is stronger for fans than for judges
+
+4. INTERACTION EFFECTS (Age × Industry):
+   - Young Athletes: Judges favor, Fans neutral
+   - Old Models: Both disfavor, especially judges
+   - Young Musicians: Both favor strongly
+   - Old TV personalities: Fans show more sympathy than judges
+
+CONCLUSION:
+- Judges and fans DO NOT weight features the same way
+- Key differences: Age penalty (judges > fans), Industry bias varies
+- Fans show more "sympathy" for underdogs (older, less skilled)

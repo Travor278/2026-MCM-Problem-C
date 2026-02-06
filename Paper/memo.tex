@@ -1,0 +1,103 @@
+\documentclass[12pt]{article}
+\usepackage[margin=0.6in]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{enumitem}
+\setlist{noitemsep, topsep=1pt, leftmargin=*}
+
+% Background image setup
+\usepackage{eso-pic}
+\usepackage{tikz}
+\AddToShipoutPictureBG{%
+    \begin{tikzpicture}[remember picture, overlay]
+        \node[opacity=0.20, inner sep=0pt] at (current page.center) {%
+            \includegraphics[height=\paperheight]{beijing.png}%
+        };
+    \end{tikzpicture}%
+}
+
+% Reduce spacing
+\usepackage{titlesec}
+\titlespacing*{\section}{0pt}{6pt}{2pt}
+
+% Page header/footer
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{Team \# 1111111}
+\rhead{Page \thepage\ of \pageref{LastPage}}
+\renewcommand{\headrulewidth}{0.4pt}
+\setlength{\headheight}{14pt}
+
+\begin{document}
+
+\noindent\textbf{MEMO}\\
+\textbf{TO:} Executive Producers, Dancing with the Stars\\
+\textbf{FROM:} Team \#1111111\\
+\textbf{DATE:} February 2, 2026\\
+\textbf{SUBJECT:} Recommendations on Voting System Design\\
+\noindent\rule{\textwidth}{0.5pt}
+
+\noindent Dear Executive Producers,
+
+After analyzing all 34 seasons, we present key findings and recommendations for combining judge scores and fan votes.
+
+\section*{Key Findings}
+
+\noindent\begin{minipage}[t]{0.54\textwidth}
+\textbf{1. Scoring Method Comparison:}
+\begin{itemize}
+    \item \textbf{Percentage-based}: Keeps fan-favorites competitive even with lower technical scores
+    \item \textbf{Rank-based}: Amplifies small gaps, reducing fan influence by 13\%
+\end{itemize}
+
+\textbf{2. Bottom-2 Mechanism:} Reduces upsets from 42\% to 8\%, preventing outcomes like Bobby Bones (S27).
+
+\textbf{3. Celebrity Type:} Athletes get 13\% more fan votes but 0.15 points lower judge scores --- fans and judges value different qualities.
+
+\textbf{4. Professional Partner:} Pro dancers account for 18.5\% of judge score variance but only 7\% of fan vote variance.
+\end{minipage}%
+\hfill
+\begin{minipage}[t]{0.43\textwidth}
+\vspace{0pt}
+\includegraphics[width=\textwidth]{figure1.png}
+
+\centering
+\textit{Figure: Dynamic weight system}
+\end{minipage}
+
+\section*{Recommendations}
+
+\noindent\textbf{1. Keep Percentage-Based Scoring} --- Maintains voting suspense and fan engagement.
+
+\textbf{2. Use Dynamic Judge Weights} --- Judges' influence grows through the season:
+
+\vspace{0.1cm}
+\begin{center}
+\begin{tabular}{cccc}
+\toprule
+\textbf{Stage} & \textbf{Judge Weight} & \textbf{Metric} & \textbf{Improvement} \\
+\midrule
+Early (Wk 1--4) & 20\% & Upsets & $-$17\% \\
+Mid (Wk 5--8) & 35\% & Engagement & $+$22\% \\
+Late (Wk 9+) & 60\% & Fairness & 96\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{3. Keep Bottom-2 from Week 7} --- Creates drama while preventing anomalies.
+
+\textbf{4. Consider Vote Credits} --- Multiple votes for one contestant cost more credits, discouraging mass voting.
+
+\section*{Bottom Line}
+
+Our system increases engagement by \textbf{22\%} while ensuring finals reward true talent. This prevents future controversies while keeping DWTS exciting.
+
+\begin{flushright}
+\textbf{Yours sincerely, Team \#1111111}
+\end{flushright}
+
+\end{document}

@@ -1,0 +1,42 @@
+
+============================================================
+Dynamic Control Model - Recommendation
+============================================================
+
+RECOMMENDED SYSTEM: Sigmoid Dynamic Weight
+
+Parameters:
+- w_min = 0.20 (Early weeks: low judge weight, protect "dark horses")
+- w_max = 0.70 (Late weeks: high judge weight, ensure skill-based winner)
+- k = 0.50 (Transition speed)
+
+Formula:
+w(t) = 0.20 + (0.70 - 0.20) / (1 + exp(-0.50 * (t - t_mid) / (t_max/4)))
+
+Performance:
+- Fairness: 0.967 (Higher = eliminated contestants had lower judge scores)
+- Robbery Rate: 2.6% (Lower = fewer top-scoring contestants eliminated)
+- Engagement: 0.530 (Higher = more fan influence)
+
+WHY ADOPT THIS SYSTEM:
+
+1. EARLY SEASON BENEFITS (w ≈ 0.2):
+   - Protects entertaining but less skilled contestants
+   - Maintains viewer interest with unexpected outcomes
+   - Gives celebrities time to improve
+
+2. LATE SEASON BENEFITS (w ≈ 0.7):
+   - Ensures champion is truly skilled
+   - Prevents "Bobby Bones" scenarios
+   - Maintains competition integrity
+
+3. GRADUAL TRANSITION:
+   - Smooth change avoids sudden rule shifts
+   - k = 0.50 provides balanced transition
+   - Viewers can anticipate changing dynamics
+
+COMPARISON WITH CURRENT SYSTEM (w=0.5 fixed):
+- Similar fairness level
+- Lower robbery rate (better)
+- Higher fan engagement (better)
+- More strategic depth for viewers

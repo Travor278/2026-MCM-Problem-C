@@ -1,0 +1,71 @@
+
+============================================================
+QUESTION 4: RECOMMENDED VOTING SYSTEM
+============================================================
+
+PROPOSED SYSTEM: Dynamic Sigmoid Weight
+
+FORMULA:
+w(t) = 0.20 + 0.50 / (1 + exp(-0.50 * (t - t_mid) / (t_max/4)))
+
+Where:
+- t = current week
+- t_max = total weeks in season
+- t_mid = t_max / 2 (midpoint)
+
+WEIGHT SCHEDULE (11-week season):
+Week 1-3:  w ≈ 0.25-0.35 (Fan-Heavy)
+Week 4-6:  w ≈ 0.40-0.50 (Balanced)
+Week 7-9:  w ≈ 0.55-0.60 (Judge-Leaning)
+Week 10-11: w ≈ 0.65-0.70 (Judge-Heavy)
+
+VALIDATION RESULTS:
+
+1. BOBBY BONES SCENARIO:
+   - Under current system: Won despite low judge scores
+   - Under proposed system: Would face higher elimination risk in later weeks
+   - Conclusion: System prevents skill-poor winners while protecting
+     entertainment in early weeks
+
+2. JERRY RICE SCENARIO:
+   - Strong athlete who improved throughout season
+   - Both systems protected him early, rewarded skill later
+   - Conclusion: System supports "improvement arcs"
+
+3. ROBBERY REDUCTION:
+   - Current system: 5 cases of top-2 judge scorer eliminated
+   - Proposed system: 4 cases
+   - Reduction: 1 fewer (20% decrease)
+
+WHY PRODUCERS SHOULD ADOPT THIS:
+
+1. ENTERTAINMENT VALUE:
+   - Early weeks protect entertaining "underdogs"
+   - Creates compelling "redemption arc" narratives
+   - Viewers feel their votes matter most when it's fun
+
+2. COMPETITION INTEGRITY:
+   - Late weeks ensure skilled dancers advance
+   - Champion has proven dance ability
+   - Avoids "Bobby Bones" PR disasters
+
+3. STRATEGIC DEPTH:
+   - Contestants know rules change → adapt strategies
+   - Creates natural "story beats" in the season
+   - More interesting for superfans to analyze
+
+4. EASY IMPLEMENTATION:
+   - Only requires changing weight calculation
+   - No new infrastructure needed
+   - Can be explained simply to viewers
+
+ALTERNATIVE ENHANCEMENTS:
+
+A. Judge Save Power (in addition to dynamic weight):
+   - Judges can "save" one bottom-2 contestant per season
+   - Prevents single-week flukes from eliminating strong dancers
+
+B. Viewer Ranking (simplified Condorcet):
+   - Ask viewers to rank top 3 favorites
+   - Weights: 3 points for #1, 2 for #2, 1 for #3
+   - Captures intensity of preference

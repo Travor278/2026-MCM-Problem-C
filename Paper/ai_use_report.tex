@@ -1,0 +1,186 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+
+\setlength{\headheight}{14pt}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{Team \# 2622622}
+\rhead{AI Use Report}
+\cfoot{\thepage}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+
+\begin{document}
+
+\begin{center}
+{\LARGE \textbf{Report on Use of AI}}\\[0.3cm]
+{\large Team \#1111111 --- 2026 MCM Problem C}\\[0.2cm]
+{\small This report does not count toward the 25-page limit.}
+\end{center}
+
+\noindent\rule{\textwidth}{0.5pt}
+
+\section*{1. AI Tools Used}
+
+In the development of our solution for the 2026 MCM Problem C (``Data With The Stars''), we utilized the following AI tools:
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Claude (Anthropic)} --- Claude Opus 4.5 via Claude Code CLI
+    \item \textbf{ChatGPT (OpenAI)} --- GPT-4o for supplementary queries
+\end{itemize}
+
+\section*{2. Purpose and Usage}
+
+We employed these AI tools for the following specific purposes:
+
+\renewcommand{\arraystretch}{1.4}
+\begin{longtable}{>{\raggedright}p{3.2cm} >{\raggedright}p{2.2cm} p{9cm}}
+\toprule
+\textbf{Purpose of AI Use} & \textbf{Tool Used} & \textbf{Description of Usage} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Purpose of AI Use} & \textbf{Tool Used} & \textbf{Description of Usage} \\
+\midrule
+\endhead
+
+Code Generation \& Debugging & Claude Code & We used AI to generate initial Python scripts for data preprocessing (handling N/A values, parsing elimination weeks from the \texttt{results} field) and to debug errors in our Bayesian MCMC sampling code (PyMC model convergence issues). All generated code was manually reviewed, tested on sample data, and modified as needed before final implementation. \\
+\midrule
+
+Algorithm Implementation & Claude Code & We queried AI for implementation guidance on specific algorithms:
+\begin{itemize}[noitemsep, topsep=0pt, leftmargin=*]
+    \item Dirichlet-based Bayesian inference for fan vote estimation
+    \item SHAP value computation with XGBoost
+    \item Cox proportional hazards model setup
+    \item Kneedle algorithm for knee point detection
+\end{itemize}
+The mathematical formulations were derived by team members; AI assisted with translating these into working code. \\
+\midrule
+
+Visualization Assistance & Claude Code, ChatGPT & We queried AI for Python \texttt{matplotlib} and \texttt{seaborn} code snippets to create specific visualizations:
+\begin{itemize}[noitemsep, topsep=0pt, leftmargin=*]
+    \item Heatmaps for counterfactual survival probabilities
+    \item Dumbbell charts comparing judge-only vs fan-only mechanisms
+    \item Pareto frontier plots for multi-objective optimization
+    \item Diverging bar charts with custom color schemes
+\end{itemize}
+All visualizations were iteratively refined based on team feedback. \\
+\midrule
+
+Language Refinement & Claude, ChatGPT & As non-native English speakers, we used AI to refine the grammar, flow, and clarity of our text, particularly for:
+\begin{itemize}[noitemsep, topsep=0pt, leftmargin=*]
+    \item The executive memo to producers
+    \item Abstract and summary sections
+    \item Technical writing in methodology sections
+\end{itemize}
+We provided our original drafts and asked for ``academic polishing'' while preserving our intended meaning. \\
+\midrule
+
+Concept Clarification & ChatGPT & We used AI to quickly clarify conceptual differences, such as:
+\begin{itemize}[noitemsep, topsep=0pt, leftmargin=*]
+    \item Rank-based vs percentage-based voting combination
+    \item Interpretation of ICC (Intraclass Correlation Coefficient)
+    \item MCMC convergence diagnostics ($\hat{R}$, ESS)
+\end{itemize}
+These clarifications were cross-referenced with academic sources. \\
+\midrule
+
+\LaTeX{} Formatting & Claude Code & We used AI to troubleshoot \LaTeX{} compilation errors and format complex elements:
+\begin{itemize}[noitemsep, topsep=0pt, leftmargin=*]
+    \item Algorithm pseudocode using \texttt{algorithm2e}
+    \item Multi-column table layouts
+    \item Figure placement and minipage alignment
+\end{itemize} \\
+\bottomrule
+\end{longtable}
+
+\section*{3. Verification of AI Output}
+
+Our team is fully aware of the risks associated with generative AI, including hallucinations and incorrect calculations. To ensure accuracy and integrity of our work:
+
+\subsection*{Mathematical Verification}
+\begin{itemize}[leftmargin=*]
+    \item All mathematical derivations and model formulations (Bayesian posterior inference, sigmoid weight function, multi-objective optimization) were performed and verified by team members independently.
+    \item We did \textbf{not} rely on AI for logical reasoning or calculation of final numerical results.
+    \item Key equations were manually derived and cross-checked against textbook references before implementation.
+\end{itemize}
+
+\subsection*{Code Validation}
+\begin{itemize}[leftmargin=*]
+    \item All AI-generated code was executed in our local Python environment, and outputs were cross-referenced with manual calculations on small data samples.
+    \item We verified the Season 1 Week 4 example provided in the problem statement to ensure our fan vote estimation model produced consistent results.
+    \item Unit tests were written for critical functions (e.g., rank normalization, elimination consistency checking).
+    \item MCMC convergence was verified using standard diagnostics: $\hat{R} < 1.05$ and ESS $> 400$ for all parameters.
+\end{itemize}
+
+\subsection*{Content Review}
+\begin{itemize}[leftmargin=*]
+    \item All text suggested by AI was reviewed line-by-line to ensure it accurately reflected our findings and did not introduce fabricated information.
+    \item Statistical claims (e.g., ``22\% engagement improvement'', ``correlation $r = -0.320$'') were verified against our actual computed results.
+    \item No AI-generated content was used verbatim without team review and modification.
+\end{itemize}
+
+\subsection*{Data Integrity}
+\begin{itemize}[leftmargin=*]
+    \item We did \textbf{not} use AI to generate, fabricate, or modify any data values.
+    \item All analysis was performed on the official \texttt{2026\_MCM\_Problem\_C\_Data.csv} dataset provided by COMAP.
+    \item Fan vote estimates were generated by our Bayesian model, not by AI prediction.
+\end{itemize}
+
+\section*{4. Specific Prompts and Outputs}
+
+Below are representative examples of our AI interactions:
+
+\subsection*{Example 1: Data Preprocessing Code}
+\textbf{Prompt:} ``Write Python code to convert the wide-format DWTS data to long format, handling N/A values in judge scores and inferring elimination weeks from the results field.''
+
+\textbf{Usage:} The generated code served as a starting template. We modified it extensively to handle edge cases (bonus points, team dances, missing 4th judge scores) identified during testing.
+
+\subsection*{Example 2: Visualization Refinement}
+\textbf{Prompt:} ``Create a diverging bar chart showing survival probability differences between judge-only and fan-only mechanisms. Use coral for positive differences and blue for negative.''
+
+\textbf{Usage:} We iteratively refined the visualization through multiple prompts, adjusting label positions, axis ranges, and color schemes based on our design preferences.
+
+\subsection*{Example 3: LaTeX Algorithm Formatting}
+\textbf{Prompt:} ``Convert this Python function into algorithm2e pseudocode format for a LaTeX document.''
+
+\textbf{Usage:} The AI output was used as a formatting reference. All algorithm logic and mathematical notation were written by team members.
+
+\section*{5. What AI Was NOT Used For}
+
+To maintain academic integrity, we explicitly did \textbf{not} use AI for:
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Core mathematical modeling:} The Bayesian fan vote estimation framework, multi-objective optimization formulation, and dynamic weight system were designed entirely by our team.
+    \item \textbf{Statistical analysis and interpretation:} All statistical tests, model comparisons, and result interpretations were performed by team members.
+    \item \textbf{Strategic recommendations:} The memo recommendations to producers were based on our own analysis and judgment.
+    \item \textbf{Data fabrication:} No data points were generated or modified by AI.
+    \item \textbf{Literature review:} All referenced sources were found and read by team members.
+\end{itemize}
+
+\section*{6. Summary}
+
+AI tools served as \textbf{productivity aids} in our workflow, primarily for:
+\begin{enumerate}[leftmargin=*]
+    \item Accelerating code implementation of well-defined algorithms
+    \item Improving English language quality in written sections
+    \item Troubleshooting technical issues in Python and \LaTeX{}
+\end{enumerate}
+
+The intellectual contributions---problem formulation, mathematical modeling, analysis design, and strategic recommendations---are entirely the work of our team. All AI outputs were critically evaluated, verified against ground truth where possible, and modified to meet our specific needs.
+
+\vspace{1cm}
+\begin{flushright}
+\textbf{Team \#1111111}\\
+February 3, 2026
+\end{flushright}
+
+\end{document}

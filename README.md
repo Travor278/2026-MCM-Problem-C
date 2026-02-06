@@ -107,9 +107,9 @@ DWTS节目中，明星与职业舞者搭档每周表演，评委打分(1-10分)�
 
 #### 数学建模
 
-设第$s$季第$w$周有$N$名选手，定义：
-- $J_i$: 选手$i$的评委总分 (已知)
-- $\theta_i$: 选手$i$的粉丝投票份额 (待估计)
+设第 $s$ 季第 $w$ 周有 $N$ 名选手，定义：
+- $J_i$: 选手 $i$ 的评委总分 (已知)
+- $\theta_i$: 选手 $i$ 的粉丝投票份额 (待估计)
 - $E$: 被淘汰选手
 
 粉丝份额满足**单纯形约束**：
@@ -156,8 +156,8 @@ $$\log \mathcal{L} = -20 \cdot \max(0, \widehat{N_{\text{lower}}} - 1.3)^2$$
 $$f_i > f_j \Rightarrow \text{rank}(f_i) < \text{rank}(f_j) \Rightarrow \text{points}(f_i) > \text{points}(f_j)$$
 
 因此，在"谁的总分最低"这一判断上：
-- 原始规则：$\text{Total}_i = \text{rank\_points}(f_i) + j_i$
-- 简化规则：$\text{Total}_i = f_i + j_i$（归一化后）
+- **原始规则**: $\text{Total}_i = \text{rankPoints}(f_i) + j_i$
+- **简化规则**: $\text{Total}_i = f_i + j_i$ （归一化后）
 
 两者的**相对大小关系完全一致**，推断出的粉丝份额分布等价。
 

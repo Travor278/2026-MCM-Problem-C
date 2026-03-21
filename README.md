@@ -3,7 +3,7 @@
 **[English Version](README_EN.md)** | 中文版
 
 > **队伍编号**: 2622622
-> **比赛成员**: ysk、Aurora、Travor
+> **比赛成员**: coconutball147、Aurora、Travor
 > **比赛时间**: 2026.01.30——2026.02.03
 
 ---
